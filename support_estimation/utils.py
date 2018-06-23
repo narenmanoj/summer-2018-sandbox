@@ -21,7 +21,6 @@ import sys
 import os
 sys.path.append(os.path.relpath("../pytorch_gan"))
 import implementations.wgan_gp.wgan_gp as wgp
-# from implementations.wgan_gp import Generator
 
 def load_gan(filename, gan_flavor):
     model = gan_flavor.Generator()
@@ -43,3 +42,4 @@ def view_samples(my_gan, num_images, nrow=0):
         nrow = int(np.sqrt(num_images))
     fake_imgs = sample_from_gan(my_gan, num_images)
     show_images(make_grid(fake_imgs.data[:num_images], nrow=nrow, normalize=True))
+    plt.show()
