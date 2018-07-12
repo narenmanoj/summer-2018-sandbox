@@ -163,6 +163,7 @@ def train(save_model=False, filename="", num_samples=10000, num_epochs=10000, nu
             plt.show()
     if save_model:
         torch.save(generator.state_dict(), filename)
+    return generator
 
 def load_model(filename, latent_dim=2, img_shape=(2,)):
     generator = Generator(latent_dim=latent_dim, img_shape=img_shape)
