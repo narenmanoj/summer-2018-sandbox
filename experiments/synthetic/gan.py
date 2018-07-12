@@ -79,13 +79,11 @@ def sample_from_2dgrid(grid_length=5, var=0.0025, num_samples=1):
         samples.append((p1, p2))
     return samples
 
-def train(save_model=False, filename="", num_samples=10000, num_epochs=10000, num_samples_per_batch=500, grid_length=5, var=0.0025, latent_dim=2):
-    num_samples = 10000 # for plotting
-    num_epochs = 10000
-    num_samples_per_batch = 500
-    grid_length = 5
-    var = 0.0025
-    latent_dim = 2
+def train(save_model=False, filename="", num_samples=10000, 
+          num_epochs=10000, num_samples_per_batch=500, 
+          grid_length=5, var=0.0025, latent_dim=2):
+    # num_samples is for plotting purposes
+    
     # initialize things
     generator = Generator(latent_dim=latent_dim)
     discriminator = Discriminator()
@@ -162,6 +160,7 @@ def train(save_model=False, filename="", num_samples=10000, num_epochs=10000, nu
             plt.scatter(x_sampled, y_sampled)
             plt.show()
     if save_model:
+        assert len(filename) > 0
         torch.save(generator.state_dict(), filename)
     return generator
 
@@ -183,8 +182,8 @@ def classification_function(point):
         return p1 - 1
     return send_to_nearest_even(x), send_to_nearest_even(y)
 
-def point_to_index(point):
+def point_to_index(point, grid_length=5):
     closest = classification_function(point)
     i = int(closest[0]) / 2 + grid_length // 2
     j = int(closest[1]) / 2 + grid_length // 2
-    return int(5 * i + j)
+    return int(grid_length * i + j)
