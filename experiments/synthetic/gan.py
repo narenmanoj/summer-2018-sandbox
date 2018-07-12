@@ -187,3 +187,61 @@ def point_to_index(point, grid_length=5):
     i = int(closest[0]) / 2 + grid_length // 2
     j = int(closest[1]) / 2 + grid_length // 2
     return int(grid_length * i + j)
+
+class DifferentiableClassifier(nn.Module):
+    def __init__(self, grid_length=5):
+        super(DifferentiableClassification, self).__init__()
+        
+        self.grid_length = grid_length
+        
+        def block(in_len, out_len):
+            layers = [nn.Linear(in_feat, out_feat)]
+            layers.append(nn.BatchNorm1d(out_feat, 0.8))
+            layers.append(nn.LeakyReLU(0.0, inplace=True))
+            return layers
+        
+        self.model = nn.Sequential(
+            *block(100, 100),
+            *block(100, 100),
+            *block(100, 100),
+            *block(100, 100),
+            *block(100, 100),
+            nn.Linear(400, grid_length * grid_length)
+        )
+        
+    def forward(self, p):
+        return self.model(p)
+    
+def train_diffable_classifier(grid_length=5, num_epochs=10000, num_samples_per_batch=5):
+    low = -2 * (grid_length // 2) + 2
+    high = 2 * (grid_length // 2) + 2
+    def sample_points(low, high, num_points):
+        return [(np.random.uniform(low=low, high=high), 
+                 np.random.uniform(low=low, high=high)) for i in range(num_points)]
+    
+    my_classifier = DifferentiableClassifier(grid_length=grid_length)
+    if cuda:
+        my_classifier.cuda()
+    loss = torch.nn.MSELoss()
+    learning_rate = 0.0002
+    b1 = 0.5
+    b2 = 0.999
+    amsgrad = True
+    optimizer = torch.optim.Adam(my_classifier.parameters(), 
+                                 lr=learning_rate, betas=(b1, b2), 
+                                 amsgrad=amsgrad)
+    for epoch in range(num_epochs):
+        # draw some random training point
+        p = Variable(Tensor(sample_points(low, high, num_samples_per_batch)))
+        answer = point_to_index(p, grid_length=grid_length)
+        optimizer.zero_grad()
+        test_output = my_classifier(p)
+        c_loss = loss(answer, test_output)
+        c_loss.backward()
+        optimizer.step()
+        
+        if epoch % (num_epochs // 10) == 0:
+            print("[Epoch %d] [Loss %f]" % (epoch, c_loss.item()))
+            
+    torch.save(my_classifier.state_dict(), "differentiable_classifier_5")
+    return my_classifier
