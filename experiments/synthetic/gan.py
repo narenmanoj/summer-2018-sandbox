@@ -183,41 +183,44 @@ def classification_function(point):
     return send_to_nearest_even(x), send_to_nearest_even(y)
 
 def point_to_index(point, grid_length=5):
-    closest = classification_function(point)
-    i = int(closest[0]) / 2 + grid_length // 2
-    j = int(closest[1]) / 2 + grid_length // 2
-    return int(grid_length * i + j)
+    def convert_one(point):
+        closest = classification_function(point)
+        i = int(closest[0]) // 2 + grid_length // 2
+        j = int(closest[1]) // 2 + grid_length // 2
+        return int(grid_length * i + j)
+    return np.array([np.array([convert_one(p)]) for p in point])
 
 class DifferentiableClassifier(nn.Module):
     def __init__(self, grid_length=5):
-        super(DifferentiableClassification, self).__init__()
+        super(DifferentiableClassifier, self).__init__()
         
         self.grid_length = grid_length
         
-        def block(in_len, out_len):
+        def block(in_feat, out_feat):
             layers = [nn.Linear(in_feat, out_feat)]
             layers.append(nn.BatchNorm1d(out_feat, 0.8))
             layers.append(nn.LeakyReLU(0.0, inplace=True))
             return layers
         
         self.model = nn.Sequential(
+            *block(2, 100),
             *block(100, 100),
             *block(100, 100),
             *block(100, 100),
             *block(100, 100),
-            *block(100, 100),
-            nn.Linear(400, grid_length * grid_length)
+            nn.Linear(100, 1)
         )
         
     def forward(self, p):
         return self.model(p)
+
+def sample_points_plane(low, high, num_points):
+    return [(np.random.uniform(low=low, high=high), 
+             np.random.uniform(low=low, high=high)) for i in range(num_points)]
     
 def train_diffable_classifier(grid_length=5, num_epochs=10000, num_samples_per_batch=5):
-    low = -2 * (grid_length // 2) + 2
+    low = -2 * (grid_length // 2) - 2
     high = 2 * (grid_length // 2) + 2
-    def sample_points(low, high, num_points):
-        return [(np.random.uniform(low=low, high=high), 
-                 np.random.uniform(low=low, high=high)) for i in range(num_points)]
     
     my_classifier = DifferentiableClassifier(grid_length=grid_length)
     if cuda:
@@ -232,11 +235,12 @@ def train_diffable_classifier(grid_length=5, num_epochs=10000, num_samples_per_b
                                  amsgrad=amsgrad)
     for epoch in range(num_epochs):
         # draw some random training point
-        p = Variable(Tensor(sample_points(low, high, num_samples_per_batch)))
-        answer = point_to_index(p, grid_length=grid_length)
+        p_np = sample_points_plane(low, high, num_samples_per_batch)
+        p = Variable(Tensor(p_np))
+        answer = Variable(Tensor(point_to_index(p_np, grid_length=grid_length)), requires_grad=False)
         optimizer.zero_grad()
         test_output = my_classifier(p)
-        c_loss = loss(answer, test_output)
+        c_loss = loss(test_output, answer)
         c_loss.backward()
         optimizer.step()
         
@@ -245,3 +249,30 @@ def train_diffable_classifier(grid_length=5, num_epochs=10000, num_samples_per_b
             
     torch.save(my_classifier.state_dict(), "differentiable_classifier_5")
     return my_classifier
+
+class ClassRadiusLoss(nn.Module):
+    def __init__(self, generator, lamb=40, eps=2):
+        super(ClassRadiusLoss, self).__init__()
+        self.generator = generator
+        self.lamb = lamb
+        self.eps = eps
+        
+    def forward(self, r, z):
+        constraint = torch.max(torch.abs(self.generator(r + z) - self.generator(z))) - self.eps
+        return torch.sum(torch.pow(r, 2)) + torch.mul(constraint, self.lamb)
+
+def dist_to_boundary(gen, z, latent_dim=2, lamb=100, num_iter=200):
+    r = Variable(Tensor(np.zeros(latent_dim)))
+    my_loss = ClassRadiusLoss(gen, lamb=lamb)
+    optimizer = torch.optim.Adam(my_loss.parameters(), lr=0.0002, betas=(0.5, 0.999), amsgrad=True)
+    loss_val = None
+    for i in range(num_iter):
+        optimizer.zero_grad()
+        loss_val = my_loss(r, z)
+        loss_val.backward()
+        optimizer.step()
+        print("Loss: %f" % loss_val.item())
+    return loss_val.item()
+
+def class_radius(gen, num_trials=10000):
+    pass # will use the above function to compute r(z)
