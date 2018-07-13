@@ -23,7 +23,7 @@ Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
 # defining generator and discriminator architecture, taken from Github Pytorch-GAN (need to modify hyperparams)
 class Generator(nn.Module):
-    def __init__(self, latent_dim=100, img_shape=(2,)):
+    def __init__(self, latent_dim=100, img_shape=(2,), layer_width=400):
         super(Generator, self).__init__()
         
         self.img_shape = img_shape
@@ -36,17 +36,17 @@ class Generator(nn.Module):
             return layers
         
         self.model = nn.Sequential(
-            *block(latent_dim, 400, normalize=True),
-            *block(400, 400),
-            *block(400, 400),
-            *block(400, 400),
-            nn.Linear(400, int(np.prod(img_shape)))
+            *block(latent_dim, layer_width, normalize=True),
+            *block(layer_width, layer_width),
+            *block(layer_width, layer_width),
+            *block(layer_width, layer_width),
+            nn.Linear(layer_width, int(np.prod(img_shape))),
         )
         
     def forward(self, z):
         img = self.model(z)
         img = img.view(img.size(0), *self.img_shape)
-        return img
+        return torch.clamp(img, min=-5.0, max=5.0)
     
 class Discriminator(nn.Module):
     def __init__(self, img_shape=(2,)):
@@ -82,11 +82,13 @@ def sample_from_2dgrid(grid_length=5, var=0.0025, num_samples=1):
 
 def train(save_model=False, filename="", num_samples=10000, 
           num_epochs=10000, num_samples_per_batch=500, 
-          grid_length=5, var=0.0025, latent_dim=2):
+          grid_length=5, var=0.0025, latent_dim=2, layer_width=400):
     # num_samples is for plotting purposes
+    if save_model:
+        assert len(filename) > 0
     
     # initialize things
-    generator = Generator(latent_dim=latent_dim)
+    generator = Generator(latent_dim=latent_dim, layer_width=400)
     discriminator = Discriminator()
     adversarial_loss = torch.nn.BCELoss()
     if cuda:
@@ -254,10 +256,12 @@ def train_diffable_classifier(grid_length=5, num_epochs=10000, num_samples_per_b
 def class_radius_loss(gen, z, r, eps=2, lamb=100):
     first = torch.norm(r, p=2).pow(2)
     constraint = torch.max(torch.abs(gen(r + z) - gen(z))) - eps
+    opt_success = False
     if float(constraint) >= 0:
         lamb = 0
+        opt_success = True # this is a feasible point
     second = torch.mul(constraint, lamb)
-    return first - second
+    return first - second, opt_success
     
 def dist_to_boundary(gen, z, latent_dim=2, eps=2, lamb=10000, num_iter=20, lr=0.05, verbose=False):
     z.require_grad = False
@@ -265,11 +269,14 @@ def dist_to_boundary(gen, z, latent_dim=2, eps=2, lamb=10000, num_iter=20, lr=0.
     r = Variable(Tensor(np.random.normal(0, initial_std, (1, latent_dim))), requires_grad=True)
     optimizer = torch.optim.Adam([r], lr=lr, betas=(0.5, 0.999), amsgrad=True)
     lowest_loss = float(lamb * 2)
+    opt_success = False
     for i in range(num_iter):
         if verbose:
             print("[Iteration %d]" % i)
         optimizer.zero_grad()
-        loss_val = class_radius_loss(gen, z, r, eps=eps, lamb=lamb)
+        loss_val, opt_success_step = class_radius_loss(gen, z, r, eps=eps, lamb=lamb)
+        if opt_success_step:
+            opt_success = True
         loss_val.backward()
         if lowest_loss > float(loss_val):
             if verbose:
@@ -282,19 +289,37 @@ def dist_to_boundary(gen, z, latent_dim=2, eps=2, lamb=10000, num_iter=20, lr=0.
     
         if verbose:
             print("Regularized loss: %f" % (float(loss_val)))
-    return best_r
+    if not opt_success:
+        return Variable(Tensor(np.zeros((1, latent_dim))), requires_grad=True), opt_success
+    return best_r, opt_success
         
 
-def class_radius(gen, latent_dim=2, num_trials=1000, num_sub_trials=10):
+def class_radius(gen, latent_dim=2, num_trials=1000, num_sub_trials=10, verbose=False, num_retrials=20):
     ans = 0
+    dividend = num_trials
     for i in range(num_trials):
         if i % (num_trials // 20) == 0:
             print("Iteration %d" % i)
         z = Variable(Tensor(np.random.normal(0, 1, (1, latent_dim))), requires_grad=False)
-        dist = 651561.0
+        dist = np.inf
         for j in range(num_sub_trials):
-            r = dist_to_boundary(gen, z, latent_dim=latent_dim, lr=0.125)
+            include_computation = False
+            for k in range(num_retrials):
+                r, opt_success = dist_to_boundary(gen, z, latent_dim=latent_dim, lr=0.125, verbose=verbose)
+                if opt_success:
+                    include_computation = True
+                    break
+                if k != num_retrials - 1 and verbose:
+                    print("RETRYING")
+                elif verbose:
+                    print("FAILED")
+            if not include_computation:
+                continue
             d = float(torch.norm(r, p=2))
             dist = min(dist, d)
+        if dist == np.inf:
+            dividend -= 1
+            print("Couldn't compute for the selected z")
+            continue
         ans += dist
-    return ans / num_trials
+    return ans / dividend
