@@ -10,6 +10,7 @@ from torchvision.utils import save_image
 from torch.utils.data import DataLoader
 from torchvision import datasets
 from torch.autograd import Variable
+from torch.autograd import Function
 
 import torch.nn as nn
 import torch.nn.functional as F
@@ -249,70 +250,51 @@ def train_diffable_classifier(grid_length=5, num_epochs=10000, num_samples_per_b
             
     torch.save(my_classifier.state_dict(), "differentiable_classifier_5")
     return my_classifier
-
-class ClassRadiusLoss(nn.Module):
-    def __init__(self, generator, latent_dim=2, lamb=40, eps=2):
-        super(ClassRadiusLoss, self).__init__()
-#         self.generator = generator
-#         self.lamb = lamb
-#         self.eps = eps
-        self.latent_dim = latent_dim
-        self.r = Variable(Tensor(np.zeros(self.latent_dim)), requires_grad=True)
-        
-    def sq_l2_norm_r(self):
-        return torch.sum(torch.pow(self.r, 2))
-        
-    def forward(self, z):
-#         constraint = torch.max(torch.abs(self.generator(self.r + z) - self.generator(z))) - self.eps
-#         return self.sq_l2_norm_r() - torch.mul(constraint, self.lamb)
-        return self.sq_l2_norm_r()
-
-class _ClassRadiusLoss(nn.Module):
-    def __init__(self, latent_dim=2):
-        super(_ClassRadiusLoss, self).__init__()
-        self.r = nn.Linear(1, latent_dim, bias=False)
-        self.r.weight.data.fill_(5.0)
-        
-    def forward(self):
-        return self.r(Variable(Tensor([1.])))
-
-def dist_to_boundary(gen, z, latent_dim=2, lamb=100, num_iter=200, eps=2):
-    r = _ClassRadiusLoss(latent_dim=latent_dim)
-    r_loss = torch.nn.MSELoss()
-    optimizer = torch.optim.Adam(r.parameters(), lr=0.002, betas=(0.5, 0.999), amsgrad=True)
-    if cuda:
-        r_loss.cuda()
-        r.cuda()
+    
+def class_radius_loss(gen, z, r, eps=2, lamb=100):
+    first = torch.norm(r, p=2).pow(2)
+    constraint = torch.max(torch.abs(gen(r + z) - gen(z))) - eps
+    if float(constraint) >= 0:
+        lamb = 0
+    second = torch.mul(constraint, lamb)
+    return first - second
+    
+def dist_to_boundary(gen, z, latent_dim=2, eps=2, lamb=10000, num_iter=20, lr=0.05, verbose=False):
+    z.require_grad = False
+    initial_std = 0.000025
+    r = Variable(Tensor(np.random.normal(0, initial_std, (1, latent_dim))), requires_grad=True)
+    optimizer = torch.optim.Adam([r], lr=lr, betas=(0.5, 0.999), amsgrad=True)
+    lowest_loss = float(lamb * 2)
     for i in range(num_iter):
+        if verbose:
+            print("[Iteration %d]" % i)
         optimizer.zero_grad()
-        current_r = r.forward()
-#         dist_moved = np.linalg.norm(current_r.cpu().detach().numpy())
-        print(current_r.grad)
-        current_loss = r_loss(current_r, Variable(Tensor(np.zeros(latent_dim)), requires_grad=False))
-        constraint = torch.max(torch.abs(gen(current_r + z) - gen(z))) - eps
-        regularizer_loss = -torch.mul(constraint, lamb)
-        final_loss = current_loss + regularizer_loss
-        final_loss.backward()
-        print(current_r)
+        loss_val = class_radius_loss(gen, z, r, eps=eps, lamb=lamb)
+        loss_val.backward()
+        if lowest_loss > float(loss_val):
+            if verbose:
+                print("Flipping %f to %f" % (lowest_loss, float(loss_val)))
+            lowest_loss = float(loss_val)
+            best_r = r.clone()
+            if verbose:
+                print("Setting r to " + str(best_r))
         optimizer.step()
+    
+        if verbose:
+            print("Regularized loss: %f" % (float(loss_val)))
+    return best_r
         
-#         print("[Loss: %f] [Distance Moved: %f]" % (final_loss.item(), dist_moved))
-        print("[Loss: %f]" % (final_loss.item()))
-    return final_loss.item()
-# def dist_to_boundary(gen, z, latent_dim=2, lamb=100, num_iter=200):
-#     my_loss = ClassRadiusLoss(gen, lamb=lamb, latent_dim=latent_dim).cuda()
-#     print(len(list(my_loss.parameters())))
-#     optimizer = torch.optim.Adam(my_loss.parameters(), lr=0.0002, betas=(0.5, 0.999), amsgrad=True)
-#     loss_val = None
-#     for i in range(num_iter):
-#         optimizer.zero_grad()
-#         loss_val = my_loss(z)
-#         loss_val.backward()
-#         print(loss_val.grad)
-#         optimizer.step()
-#         g_norm = 0
-#         print("[Loss: %f] [Gradient Norm: %f]" % (loss_val.item(), g_norm))
-#     return loss_val.item()
 
-def class_radius(gen, num_trials=10000):
-    pass # will use the above function to compute r(z)
+def class_radius(gen, latent_dim=2, num_trials=1000, num_sub_trials=10):
+    ans = 0
+    for i in range(num_trials):
+        if i % (num_trials // 20) == 0:
+            print("Iteration %d" % i)
+        z = Variable(Tensor(np.random.normal(0, 1, (1, latent_dim))), requires_grad=False)
+        dist = 651561.0
+        for j in range(num_sub_trials):
+            r = dist_to_boundary(gen, z, latent_dim=latent_dim, lr=0.125)
+            d = float(torch.norm(r, p=2))
+            dist = min(dist, d)
+        ans += dist
+    return ans / num_trials
