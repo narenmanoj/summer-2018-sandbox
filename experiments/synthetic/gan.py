@@ -23,10 +23,11 @@ Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
 # defining generator and discriminator architecture, taken from Github Pytorch-GAN (need to modify hyperparams)
 class Generator(nn.Module):
-    def __init__(self, latent_dim=100, img_shape=(2,), layer_width=400):
+    def __init__(self, latent_dim=100, img_shape=(2,), layer_width=400, grid_length=5):
         super(Generator, self).__init__()
         
         self.img_shape = img_shape
+        self.grid_length = grid_length
         
         def block(in_feat, out_feat, normalize=True):
             layers = [nn.Linear(in_feat, out_feat)]
@@ -46,7 +47,7 @@ class Generator(nn.Module):
     def forward(self, z):
         img = self.model(z)
         img = img.view(img.size(0), *self.img_shape)
-        return torch.clamp(img, min=-5.0, max=5.0)
+        return torch.clamp(img, min=-self.grid_length, max=self.grid_length)
     
 class Discriminator(nn.Module):
     def __init__(self, img_shape=(2,)):
@@ -88,7 +89,7 @@ def train(save_model=False, filename="", num_samples=10000,
         assert len(filename) > 0
     
     # initialize things
-    generator = Generator(latent_dim=latent_dim, layer_width=400)
+    generator = Generator(latent_dim=latent_dim, layer_width=layer_width, grid_length=grid_length)
     discriminator = Discriminator()
     adversarial_loss = torch.nn.BCELoss()
     if cuda:
@@ -153,7 +154,7 @@ def train(save_model=False, filename="", num_samples=10000,
                   (epoch, num_epochs, d_loss.item(), g_loss.item()))
         
         if epoch % (num_epochs // 10) == 0:
-            num_samples_to_test = 200
+            num_samples_to_test = 2000
             z = Variable(Tensor(np.random.normal(0, 1, (num_samples_to_test, latent_dim))))
             np_samples = generator(z).cpu().detach().numpy()
             x_sampled = [sample[0] for sample in np_samples]
@@ -167,8 +168,8 @@ def train(save_model=False, filename="", num_samples=10000,
         torch.save(generator.state_dict(), filename)
     return generator
 
-def load_model(filename, latent_dim=2, img_shape=(2,)):
-    generator = Generator(latent_dim=latent_dim, img_shape=img_shape)
+def load_model(filename, latent_dim=2, img_shape=(2,), grid_length=5, layer_width=400):
+    generator = Generator(latent_dim=latent_dim, img_shape=img_shape, grid_length=grid_length, layer_width=layer_width)
     generator.load_state_dict(torch.load(filename))
     if cuda:
         generator.cuda()
