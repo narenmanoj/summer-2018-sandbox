@@ -364,3 +364,58 @@ def class_radius(gen, latent_dim=2, num_trials=1000, num_sub_trials=10, verbose=
             continue
         ans += dist
     return ans / dividend
+
+def gradient_free_radius(z, loaded_gen, latent_dim=2, grid_length=5, num_trials=10):
+    znp = z.cpu().detach().numpy()
+    znp_gan_eval = loaded_gen(z).cpu().detach().numpy()
+    z_class = point_to_index(znp_gan_eval, grid_length=grid_length)
+
+    dist = 0.0
+    best_global_point = None
+    for i in range(num_trials):
+        # sample a point z_prime at random with a different classification
+        z_prime = Variable(Tensor(np.random.normal(0, 1, (1, latent_dim))))
+        zpnp = z_prime.cpu().detach().numpy()
+        zpnp_gan_eval = loaded_gen(z_prime).cpu().detach().numpy()
+        z_prime_class = point_to_index(zpnp_gan_eval, grid_length=grid_length)
+        while z_prime_class == z_class:
+            z_prime = Variable(Tensor(np.random.normal(0, 1, (1, latent_dim))))
+            zpnp = z_prime.cpu().detach().numpy()
+            zpnp_gan_eval = loaded_gen(z_prime).cpu().detach().numpy()
+            z_prime_class = point_to_index(zpnp_gan_eval, grid_length=grid_length)
+
+        # print("[Z Class: %d] [Z prime Class: %d]" % (z_class, z_prime_class))
+        # print((znp, zpnp))
+        # compute largest lamb s.t. lamb * z + (1 - lamb) * z_prime
+        # has a different classification index from z
+
+        high, low = 1.0, 0.0
+        lamb = 0.50
+        equal_eps = 0.0000001
+        while high > low + equal_eps:
+            lamb = (high + low) / 2.0
+            test_z = lamb * znp + (1 - lamb) * zpnp
+            test_z_tensor = Variable(Tensor(test_z))
+            test_z_eval = loaded_gen(test_z_tensor).cpu().detach().numpy()
+            test_z_class = point_to_index(test_z_eval, grid_length=grid_length)
+            if test_z_class == z_class:
+                # this means that lamb is too high
+                high = lamb
+            else:
+                # this means that lamb is too low
+                low = lamb
+        best_point = lamb * znp + (1 - lamb) * zpnp
+        best_point_tensor = Variable(Tensor(best_point))
+        best_point_eval = loaded_gen(best_point_tensor).cpu().detach().numpy()
+        best_point_class = point_to_index(best_point_eval, grid_length=grid_length)
+
+        # print((z_class, best_point_class))
+        d = np.linalg.norm(best_point - z)
+        if dist == 0:
+            dist = d
+            best_global_point = best_point.copy()
+        dist = min(dist, d)
+        if dist == d:
+            best_global_point = best_point.copy()
+
+    return dist, best_global_point
