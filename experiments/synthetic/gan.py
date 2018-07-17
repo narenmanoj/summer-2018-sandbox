@@ -199,8 +199,6 @@ def point_to_index(point, grid_length=5):
     return np.array([np.array([convert_one(p)]) for p in point])
 
 def visualize_model(loaded_gen, latent_dim=2, grid_length=5, num_samples=10000, num_gen_samples=20000):
-    plt.clf()
-    
     real_samples = sample_from_2dgrid(grid_length=grid_length, num_samples=num_samples)
     plt.scatter(*zip(*real_samples))
 
@@ -208,12 +206,8 @@ def visualize_model(loaded_gen, latent_dim=2, grid_length=5, num_samples=10000, 
     np_samples = loaded_gen(z).cpu().detach().numpy()
     plt.title("2D Grid of samples obtained. Grid length = %d" % grid_length)
     plt.scatter(*zip(*np_samples), s=2.5)
-    
-    plt.show()
 
 def visualize_latent_space(loaded_gen, latent_dim=2, grid_length=5, num_gen_samples=20000):
-    plt.clf()
-    
     counts = []
     latent_vecs = []
     colors = []
@@ -239,8 +233,6 @@ def visualize_latent_space(loaded_gen, latent_dim=2, grid_length=5, num_gen_samp
         if len(latent_vecs[i]) == 0:
             continue
         plt.scatter(*zip(*latent_vecs[i]), color=colors[i], s=5)
-    
-    plt.show()
     
 class DifferentiableClassifier(nn.Module):
     def __init__(self, grid_length=5):
