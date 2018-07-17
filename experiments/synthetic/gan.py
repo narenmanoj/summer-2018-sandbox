@@ -47,7 +47,7 @@ class Generator(nn.Module):
     def forward(self, z):
         img = self.model(z)
         img = img.view(img.size(0), *self.img_shape)
-        return torch.clamp(img, min=-self.grid_length, max=self.grid_length)
+        return torch.clamp(img, min=-self.grid_length + 0.001, max=self.grid_length - 0.001)
     
 class Discriminator(nn.Module):
     def __init__(self, img_shape=(2,)):
@@ -191,9 +191,59 @@ def point_to_index(point, grid_length=5):
         closest = classification_function(point)
         i = int(closest[0]) // 2 + grid_length // 2
         j = int(closest[1]) // 2 + grid_length // 2
+        ans = int(grid_length * i + j)
+        print((point, closest))
+#         print(ans)
+        assert 0 <= i <= grid_length - 1
+        assert 0 <= j <= grid_length - 1
+        assert ans >= 0
         return int(grid_length * i + j)
     return np.array([np.array([convert_one(p)]) for p in point])
 
+def visualize_model(loaded_gen, latent_dim=2, grid_length=5, num_samples=10000, num_gen_samples=20000):
+    plt.clf()
+    
+    real_samples = sample_from_2dgrid(grid_length=grid_length, num_samples=num_samples)
+    plt.scatter(*zip(*real_samples))
+
+    z = Variable(Tensor(np.random.normal(0, 1, (num_gen_samples, latent_dim))))
+    np_samples = loaded_gen(z).cpu().detach().numpy()
+    plt.title("2D Grid of samples obtained. Grid length = %d" % grid_length)
+    plt.scatter(*zip(*np_samples), s=2.5)
+    
+    plt.show()
+
+def visualize_latent_space(loaded_gen, latent_dim=2, grid_length=5, num_gen_samples=20000):
+    plt.clf()
+    
+    counts = []
+    latent_vecs = []
+    colors = []
+    for i in range(grid_length * grid_length):
+        counts.append(0)
+        colors.append((np.random.uniform(), np.random.uniform(), np.random.uniform()))
+        latent_vecs.append([])
+
+    num_samples_to_test = 20000
+    z = Variable(Tensor(np.random.normal(0, 1, (num_gen_samples, latent_dim))))
+    np_samples = loaded_gen(z).cpu().detach().numpy()
+    np_latent_vec = z.cpu().numpy()
+
+    for i in range(num_gen_samples):
+        index = point_to_index([np_samples[i]])
+        current_z = np_latent_vec[i]
+        counts[index[0][0]] += 1
+        latent_vecs[index[0][0]].append(current_z)
+
+    plt.clf()
+    plt.title("Vectors in latent space mapping to different modes for 2D-Grid (grid length %d)" % grid_length)
+    for i in range(grid_length * grid_length):
+        if len(latent_vecs[i]) == 0:
+            continue
+        plt.scatter(*zip(*latent_vecs[i]), color=colors[i], s=5)
+    
+    plt.show()
+    
 class DifferentiableClassifier(nn.Module):
     def __init__(self, grid_length=5):
         super(DifferentiableClassifier, self).__init__()
@@ -223,8 +273,8 @@ def sample_points_plane(low, high, num_points):
              np.random.uniform(low=low, high=high)) for i in range(num_points)]
     
 def train_diffable_classifier(grid_length=5, num_epochs=10000, num_samples_per_batch=5):
-    low = -2 * (grid_length // 2) - 2
-    high = 2 * (grid_length // 2) + 2
+    low = -2 * (grid_length // 2) - 0.99
+    high = 2 * (grid_length // 2) + 0.99
     
     my_classifier = DifferentiableClassifier(grid_length=grid_length)
     if cuda:
