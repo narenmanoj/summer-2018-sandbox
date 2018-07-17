@@ -512,3 +512,24 @@ def gradient_free_radius(z,
             best_global_point = best_point.copy()
 
     return dist, best_global_point
+
+
+def gradient_free_avg_radius(loaded_gen,
+                             latent_dim=2,
+                             grid_length=5,
+                             num_trials=1000):
+    total_dist = 0.0
+    for i in range(1, num_trials + 1):
+        if i % (num_trials // 10) == 0:
+            print("[Iteration %d] [Distance: %f]" % (i, total_dist / i))
+        num_sub_trials = 20
+        z = Variable(Tensor(np.random.normal(0, 1, (1, latent_dim))))
+        dist, best_global_point = gradient_free_radius(
+            z,
+            loaded_gen,
+            latent_dim=latent_dim,
+            grid_length=grid_length,
+            num_trials=num_sub_trials)
+        total_dist += dist
+    avg_dist = total_dist / num_trials
+    return avg_dist
