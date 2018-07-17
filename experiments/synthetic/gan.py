@@ -192,8 +192,6 @@ def point_to_index(point, grid_length=5):
         i = int(closest[0]) // 2 + grid_length // 2
         j = int(closest[1]) // 2 + grid_length // 2
         ans = int(grid_length * i + j)
-        print((point, closest))
-#         print(ans)
         assert 0 <= i <= grid_length - 1
         assert 0 <= j <= grid_length - 1
         assert ans >= 0
@@ -230,7 +228,7 @@ def visualize_latent_space(loaded_gen, latent_dim=2, grid_length=5, num_gen_samp
     np_latent_vec = z.cpu().numpy()
 
     for i in range(num_gen_samples):
-        index = point_to_index([np_samples[i]])
+        index = point_to_index([np_samples[i]], grid_length=grid_length)
         current_z = np_latent_vec[i]
         counts[index[0][0]] += 1
         latent_vecs[index[0][0]].append(current_z)
