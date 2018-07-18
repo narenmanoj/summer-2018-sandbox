@@ -246,7 +246,34 @@ def point_to_index(point, grid_length=5):
 
     return np.array([np.array([convert_one(p)]) for p in point])
 
-def count_support_size(loaded_gen, latent_dim=2, grid_length=5, num_samples=10000, num_gen_samples=20000):
+
+def is_high_quality(sample, grid_length=5, var=0.0025):
+    closest = classification_function(sample)
+    dist = np.linalg.norm(sample - closest)
+    stdev = np.sqrt(var)
+    if -3 * stdev <= dist <= 3 * stdev:
+        return True
+    return False
+
+
+def frac_high_quality_samples(loaded_gen,
+                              latent_dim=2,
+                              grid_length=5,
+                              num_gen_samples=20000):
+    z = Variable(Tensor(np.random.normal(0, 1, (num_gen_samples, latent_dim))))
+    np_samples = loaded_gen(z).cpu().detach().numpy()
+
+    ans = 0.0
+    for s in np_samples:
+        ans += int(is_high_quality(s, grid_length=grid_length))
+    return ans / num_gen_samples
+
+
+def count_support_size(loaded_gen,
+                       latent_dim=2,
+                       grid_length=5,
+                       num_samples=10000,
+                       num_gen_samples=20000):
     real_samples = sample_from_2dgrid(
         grid_length=grid_length, num_samples=num_samples)
     plt.scatter(*zip(*real_samples))
@@ -260,6 +287,7 @@ def count_support_size(loaded_gen, latent_dim=2, grid_length=5, num_samples=1000
     plt.title("2D Grid of samples obtained. Grid length = %d" % grid_length)
     plt.scatter(*zip(*np_cleaned_samples), s=2.5)
     return len(support)
+
 
 def visualize_model(loaded_gen,
                     latent_dim=2,
