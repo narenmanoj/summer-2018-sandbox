@@ -330,7 +330,7 @@ def visualize_latent_space(loaded_gen,
 
     plt.clf()
     plt.title(
-        "Vectors in latent space mapping to different modes for 2D-Grid (grid length %d)"
+        "Vectors in latent space mapping to\n different modes for 2D-Grid (grid length %d)"
         % grid_length)
     for i in range(grid_length * grid_length):
         if len(latent_vecs[i]) == 0:
