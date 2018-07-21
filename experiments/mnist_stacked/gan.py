@@ -65,11 +65,12 @@ class DCGenerator(nn.Module):
 
 
 class DCDiscriminator(nn.Module):
-    def __init__(self, img_size=32, channels=3):
+    def __init__(self, img_size=32, channels=3, packing=1):
         super(DCDiscriminator, self).__init__()
 
         self.img_size = 32
         self.channels = 3
+        self.packing = packing
 
         def discriminator_block(in_filters, out_filters, bn=True):
             block = [
@@ -104,9 +105,19 @@ class DCDiscriminator(nn.Module):
 def show(img):
     npimg = img.clone().cpu().numpy()
     num_images = npimg.shape[0]
-    for i in range(num_images):
-        plt.subplot(1, num_images, i + 1)
-        plt.imshow(np.transpose(npimg[i], (1, 2, 0)), interpolation='nearest')
+    nrows = int(np.ceil(np.sqrt(num_images)))
+    ncols = nrows
+    i = 0
+    for row in range(nrows):
+        for col in range(ncols):
+            plt.subplot(nrows, ncols, i + 1)
+            plt.imshow(np.transpose(npimg[i], (1, 2, 0)), interpolation='nearest')
+            i += 1
+            if i >= num_images:
+                return
+#     for i in range(num_images):
+#         plt.subplot(1, num_images, i + 1)
+#         plt.imshow(np.transpose(npimg[i], (1, 2, 0)), interpolation='nearest')
     
 
 def get_mnist_dataloader(batch_size, img_size=32):
@@ -141,7 +152,8 @@ def train(save_model=False,
           filename="",
           num_epochs=10000,
           num_samples_per_batch=100,
-          latent_dim=100):
+          latent_dim=100,
+          disp_interval=10):
     # num_samples is for plotting purposes
     if save_model:
         assert len(filename) > 0
@@ -222,11 +234,11 @@ def train(save_model=False,
             optimizer_D.step()
 
         # progress prints and checkpointing (checkpointing not implemented)
-        if epoch % (num_epochs // 10) == 0:
+        if epoch % (num_epochs // disp_interval) == 0:
             print("[Epoch %d/%d] [Discriminator Loss: %f] [Generator Loss: %f]"
                   % (epoch, num_epochs, d_loss.item(), g_loss.item()))
 
-        if epoch % (num_epochs // 10) == 0:
+        if epoch % (num_epochs // disp_interval) == 0:
             num_samples_to_test = 10
             z = Variable(
                 Tensor(
