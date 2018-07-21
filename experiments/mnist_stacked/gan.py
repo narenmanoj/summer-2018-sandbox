@@ -34,7 +34,7 @@ def dc_weights_init_normal(m):
 # defining generator and discriminator architecture, taken from Github Pytorch-GAN (need to modify hyperparams)
 class DCGenerator(nn.Module):
     def __init__(self, latent_dim=100, img_size=32, channels=3):
-        super(Generator, self).__init__()
+        super(DCGenerator, self).__init__()
 
         self.latent_dim = 100
         self.img_size = 32
@@ -49,11 +49,11 @@ class DCGenerator(nn.Module):
             nn.Upsample(scale_factor=2),
             nn.Conv2d(128, 128, 3, stride=1, padding=1),
             nn.BatchNorm2d(128, 0.8),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(0.0, inplace=True),
             nn.Upsample(scale_factor=2),
             nn.Conv2d(128, 64, 3, stride=1, padding=1),
             nn.BatchNorm2d(64, 0.8),
-            nn.LeakyReLU(0.2, inplace=True),
+            nn.LeakyReLU(0.0, inplace=True),
             nn.Conv2d(64, self.channels, 3, stride=1, padding=1),
             nn.Tanh())
 
@@ -66,7 +66,7 @@ class DCGenerator(nn.Module):
 
 class DCDiscriminator(nn.Module):
     def __init__(self, img_size=32, channels=3):
-        super(Discriminator, self).__init__()
+        super(DCDiscriminator, self).__init__()
 
         self.img_size = 32
         self.channels = 3
@@ -103,8 +103,11 @@ class DCDiscriminator(nn.Module):
 
 def show(img):
     npimg = img.clone().cpu().numpy()
-    plt.imshow(np.transpose(npimg, (1, 2, 0)), interpolation='nearest')
-
+    num_images = npimg.shape[0]
+    for i in range(num_images):
+        plt.subplot(1, num_images, i + 1)
+        plt.imshow(np.transpose(npimg[i], (1, 2, 0)), interpolation='nearest')
+    
 
 def get_mnist_dataloader(batch_size, img_size=32):
     assert batch_size % 3 == 0  # for stacking
@@ -136,28 +139,25 @@ def form_stacks(imgs):
 
 def train(save_model=False,
           filename="",
-          num_samples=10000,
           num_epochs=10000,
-          num_samples_per_batch=500,
-          grid_length=5,
-          var=0.0025,
-          latent_dim=2,
-          layer_width=400):
+          num_samples_per_batch=100,
+          latent_dim=100):
     # num_samples is for plotting purposes
     if save_model:
         assert len(filename) > 0
 
     # initialize things
-    generator = Generator(
-        latent_dim=latent_dim,
-        layer_width=layer_width,
-        grid_length=grid_length)
-    discriminator = Discriminator()
+    generator = DCGenerator(
+        latent_dim=latent_dim)
+    discriminator = DCDiscriminator()
     adversarial_loss = torch.nn.BCELoss()
     if cuda:
         generator.cuda()
         discriminator.cuda()
         adversarial_loss.cuda()
+        
+    generator.apply(dc_weights_init_normal)
+    discriminator.apply(dc_weights_init_normal)
 
     # optimizers
     learning_rate = 0.0002
@@ -166,7 +166,7 @@ def train(save_model=False,
     amsgrad = True
     optimizer_G = torch.optim.Adam(
         generator.parameters(),
-        lr=8 * learning_rate,
+        lr=learning_rate,
         betas=(b1, b2),
         amsgrad=amsgrad)
     optimizer_D = torch.optim.Adam(
@@ -174,59 +174,52 @@ def train(save_model=False,
         lr=learning_rate,
         betas=(b1, b2),
         amsgrad=amsgrad)
-
-    # underlay of true distribution
-    real_samples = sample_from_2dgrid(
-        grid_length=grid_length, num_samples=num_samples)
-    x = [real_samples[i][0] for i in range(num_samples)]
-    y = [real_samples[i][1] for i in range(num_samples)]
+    
+    dataloader = get_mnist_dataloader(num_samples_per_batch * 3)
 
     # train the GAN
     for epoch in range(num_epochs):
-        # ground truths
-        valid = Variable(
-            Tensor(num_samples_per_batch, 1).fill_(1.0), requires_grad=False)
-        fake = Variable(
-            Tensor(num_samples_per_batch, 1).fill_(0.0), requires_grad=False)
+        for i, (imgs, _) in enumerate(dataloader):
+            # input
+            real_input = form_stacks(Variable(imgs.type(Tensor), requires_grad=False))
 
-        # input
-        real_input = Variable(
-            Tensor(
-                sample_from_2dgrid(
-                    grid_length=grid_length,
-                    var=var,
-                    num_samples=num_samples_per_batch)))
+            # ground truths
+            valid = Variable(
+                Tensor(real_input.shape[0], 1).fill_(1.0), requires_grad=False)
+            fake = Variable(
+                Tensor(real_input.shape[0], 1).fill_(0.0), requires_grad=False)
 
-        ########## Generator stuff ##########
-        optimizer_G.zero_grad()
-        # sample latent z
-        z = Variable(
-            Tensor(
-                np.random.normal(
-                    loc=0.0,
-                    scale=1.0,
-                    size=(num_samples_per_batch, latent_dim))))
 
-        # get generator output for the latent z
-        fake_output = generator(z)
+            ########## Generator stuff ##########
+            optimizer_G.zero_grad()
+            # sample latent z
+            z = Variable(
+                Tensor(
+                    np.random.normal(
+                        loc=0.0,
+                        scale=1.0,
+                        size=(real_input.shape[0], latent_dim))))
 
-        # how well did we fool the discriminator?
-        g_loss = adversarial_loss(discriminator(fake_output), valid)
+            # get generator output for the latent z
+            fake_output = generator(z)
 
-        # gradient descent
-        g_loss.backward()
-        optimizer_G.step()
+            # how well did we fool the discriminator?
+            g_loss = adversarial_loss(discriminator(fake_output), valid)
 
-        ########## Discriminator stuff ##########
-        optimizer_D.zero_grad()
-        # see how well the discriminator can discriminate
-        real_loss = adversarial_loss(discriminator(real_input), valid)
-        fake_loss = adversarial_loss(discriminator(fake_output.detach()), fake)
-        d_loss = (real_loss + fake_loss) / 2
+            # gradient descent
+            g_loss.backward()
+            optimizer_G.step()
 
-        # gradient descent
-        d_loss.backward()
-        optimizer_D.step()
+            ########## Discriminator stuff ##########
+            optimizer_D.zero_grad()
+            # see how well the discriminator can discriminate
+            real_loss = adversarial_loss(discriminator(real_input), valid)
+            fake_loss = adversarial_loss(discriminator(fake_output.detach()), fake)
+            d_loss = (real_loss + fake_loss) / 2
+
+            # gradient descent
+            d_loss.backward()
+            optimizer_D.step()
 
         # progress prints and checkpointing (checkpointing not implemented)
         if epoch % (num_epochs // 10) == 0:
@@ -234,16 +227,12 @@ def train(save_model=False,
                   % (epoch, num_epochs, d_loss.item(), g_loss.item()))
 
         if epoch % (num_epochs // 10) == 0:
-            num_samples_to_test = 2000
+            num_samples_to_test = 10
             z = Variable(
                 Tensor(
                     np.random.normal(0, 1, (num_samples_to_test, latent_dim))))
-            np_samples = generator(z).cpu().detach().numpy()
-            x_sampled = [sample[0] for sample in np_samples]
-            y_sampled = [sample[1] for sample in np_samples]
-            plt.title("2D Grid of samples obtained")
-            plt.scatter(x, y)
-            plt.scatter(x_sampled, y_sampled)
+            samples = generator(z)
+            show(samples.detach())
             plt.show()
     if save_model:
         assert len(filename) > 0
@@ -252,15 +241,11 @@ def train(save_model=False,
 
 
 def load_model(filename,
-               latent_dim=2,
-               img_shape=(2, ),
-               grid_length=5,
-               layer_width=400):
-    generator = Generator(
+               latent_dim=100,
+               img_size=32):
+    generator = DCGenerator(
         latent_dim=latent_dim,
-        img_shape=img_shape,
-        grid_length=grid_length,
-        layer_width=layer_width)
+        img_size=img_size)
     generator.load_state_dict(torch.load(filename))
     if cuda:
         generator.cuda()
