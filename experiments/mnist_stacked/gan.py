@@ -35,13 +35,14 @@ def dc_weights_init_normal(m):
 class DCGenerator(nn.Module):
     def __init__(self, latent_dim=100, img_size=32, channels=3):
         super(Generator, self).__init__()
-        
+
         self.latent_dim = 100
         self.img_size = 32
         self.channels = 3
 
         self.init_size = self.img_size // 4
-        self.l1 = nn.Sequential(nn.Linear(self.latent_dim, 128*self.init_size**2))
+        self.l1 = nn.Sequential(
+            nn.Linear(self.latent_dim, 128 * self.init_size**2))
 
         self.conv_blocks = nn.Sequential(
             nn.BatchNorm2d(128),
@@ -54,8 +55,7 @@ class DCGenerator(nn.Module):
             nn.BatchNorm2d(64, 0.8),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Conv2d(64, self.channels, 3, stride=1, padding=1),
-            nn.Tanh()
-        )
+            nn.Tanh())
 
     def forward(self, z):
         out = self.l1(z)
@@ -63,17 +63,20 @@ class DCGenerator(nn.Module):
         img = self.conv_blocks(out)
         return img
 
+
 class DCDiscriminator(nn.Module):
     def __init__(self, img_size=32, channels=3):
         super(Discriminator, self).__init__()
-        
+
         self.img_size = 32
         self.channels = 3
 
         def discriminator_block(in_filters, out_filters, bn=True):
-            block = [   nn.Conv2d(in_filters, out_filters, 3, 2, 1),
-                        nn.LeakyReLU(0.2, inplace=True),
-                        nn.Dropout2d(0.25)]
+            block = [
+                nn.Conv2d(in_filters, out_filters, 3, 2, 1),
+                nn.LeakyReLU(0.2, inplace=True),
+                nn.Dropout2d(0.25)
+            ]
             if bn:
                 block.append(nn.BatchNorm2d(out_filters, 0.8))
             return block
@@ -87,8 +90,8 @@ class DCDiscriminator(nn.Module):
 
         # The height and width of downsampled image
         ds_size = self.img_size // 2**4
-        self.adv_layer = nn.Sequential( nn.Linear(128*ds_size**2, 1),
-                                        nn.Sigmoid())
+        self.adv_layer = nn.Sequential(
+            nn.Linear(128 * ds_size**2, 1), nn.Sigmoid())
 
     def forward(self, img):
         out = self.model(img)
@@ -97,27 +100,32 @@ class DCDiscriminator(nn.Module):
 
         return validity
 
-    
+
 def show(img):
     npimg = img.clone().cpu().numpy()
     plt.imshow(np.transpose(npimg, (1, 2, 0)), interpolation='nearest')
-    
+
+
 def get_mnist_dataloader(batch_size, img_size=32):
-    assert batch_size % 3 == 0 # for stacking
+    assert batch_size % 3 == 0  # for stacking
     os.makedirs("./data/mnist", exist_ok=True)
     dataloader = torch.utils.data.DataLoader(
-        datasets.MNIST("./data/mnist", train=True, download=True,
-                       transform=transforms.Compose([
-                           transforms.Resize(img_size),
-                           transforms.ToTensor(),
-                           transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-                       ])),
-        batch_size=batch_size, shuffle=True)
+        datasets.MNIST(
+            "./data/mnist",
+            train=True,
+            download=True,
+            transform=transforms.Compose([
+                transforms.Resize(img_size),
+                transforms.ToTensor(),
+                transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+            ])),
+        batch_size=batch_size,
+        shuffle=True)
     return dataloader
 
-    
+
 def form_stacks(imgs):
-    assert len(imgs) % 3 == 0 # for stacking
+    assert len(imgs) % 3 == 0  # for stacking
     batch = []
     for i in range(0, len(imgs), 3):
         # stack imgs[i], imgs[i + 1], imgs[i + 2] across RGB channels
