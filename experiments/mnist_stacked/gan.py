@@ -97,8 +97,33 @@ class DCDiscriminator(nn.Module):
 
         return validity
 
-def sample_from_stacked_mnist():
-    pass
+    
+def show(img):
+    npimg = img.clone().cpu().numpy()
+    plt.imshow(np.transpose(npimg, (1, 2, 0)), interpolation='nearest')
+    
+def get_mnist_dataloader(batch_size, img_size=32):
+    assert batch_size % 3 == 0 # for stacking
+    os.makedirs("./data/mnist", exist_ok=True)
+    dataloader = torch.utils.data.DataLoader(
+        datasets.MNIST("./data/mnist", train=True, download=True,
+                       transform=transforms.Compose([
+                           transforms.Resize(img_size),
+                           transforms.ToTensor(),
+                           transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+                       ])),
+        batch_size=batch_size, shuffle=True)
+    return dataloader
+
+    
+def form_stacks(imgs):
+    assert len(imgs) % 3 == 0 # for stacking
+    batch = []
+    for i in range(0, len(imgs), 3):
+        # stack imgs[i], imgs[i + 1], imgs[i + 2] across RGB channels
+        new_img = torch.cat([imgs[i], imgs[i + 1], imgs[i + 2]])
+        batch.append(new_img)
+    return torch.stack(batch)
 
 
 def train(save_model=False,
