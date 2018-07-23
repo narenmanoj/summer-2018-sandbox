@@ -82,8 +82,9 @@ class DCDiscriminator(nn.Module):
                 block.append(nn.BatchNorm2d(out_filters, 0.8))
             return block
 
+        # packing occurs across the channels
         self.model = nn.Sequential(
-            *discriminator_block(self.channels, 16, bn=False),
+            *discriminator_block(self.packing * self.channels, 16, bn=False),
             *discriminator_block(16, 32),
             *discriminator_block(32, 64),
             *discriminator_block(64, 128),
@@ -122,6 +123,7 @@ def show(img):
 
 def get_mnist_dataloader(batch_size, img_size=32):
     assert batch_size % 3 == 0  # for stacking
+    assert 60000 % batch_size == 0 # to account for packing
     os.makedirs("./data/mnist", exist_ok=True)
     dataloader = torch.utils.data.DataLoader(
         datasets.MNIST(
@@ -137,6 +139,17 @@ def get_mnist_dataloader(batch_size, img_size=32):
         shuffle=True)
     return dataloader
 
+def pack_samples(imgs, packing=1):
+    assert packing >= 1
+    if packing != 1:
+        assert len(imgs) % packing == 0
+    batch = []
+    for i in range(0, len(imgs), packing):
+        sub_batch = []
+        for j in range(packing):
+            sub_batch.append(imgs[i + j])
+        batch.append(torch.cat(sub_batch))
+    return torch.stack(batch)
 
 def form_stacks(imgs):
     assert len(imgs) % 3 == 0  # for stacking
@@ -153,7 +166,8 @@ def train(save_model=False,
           num_epochs=10000,
           num_samples_per_batch=100,
           latent_dim=100,
-          disp_interval=10):
+          disp_interval=10,
+          packing=1):
     # num_samples is for plotting purposes
     if save_model:
         assert len(filename) > 0
@@ -161,7 +175,7 @@ def train(save_model=False,
     # initialize things
     generator = DCGenerator(
         latent_dim=latent_dim)
-    discriminator = DCDiscriminator()
+    discriminator = DCDiscriminator(packing=packing)
     adversarial_loss = torch.nn.BCELoss()
     if cuda:
         generator.cuda()
@@ -187,19 +201,21 @@ def train(save_model=False,
         betas=(b1, b2),
         amsgrad=amsgrad)
     
-    dataloader = get_mnist_dataloader(num_samples_per_batch * 3)
+    dataloader = get_mnist_dataloader(num_samples_per_batch * 3 * packing)
 
     # train the GAN
     for epoch in range(num_epochs):
         for i, (imgs, _) in enumerate(dataloader):
             # input
             real_input = form_stacks(Variable(imgs.type(Tensor), requires_grad=False))
+            
+            real_packed_input = pack_samples(real_input, packing) # goes into discriminator
 
             # ground truths
             valid = Variable(
-                Tensor(real_input.shape[0], 1).fill_(1.0), requires_grad=False)
+                Tensor(real_packed_input.shape[0], 1).fill_(1.0), requires_grad=False)
             fake = Variable(
-                Tensor(real_input.shape[0], 1).fill_(0.0), requires_grad=False)
+                Tensor(real_packed_input.shape[0], 1).fill_(0.0), requires_grad=False)
 
 
             ########## Generator stuff ##########
@@ -214,9 +230,10 @@ def train(save_model=False,
 
             # get generator output for the latent z
             fake_output = generator(z)
+            fake_packed_output = pack_samples(fake_output, packing) # goes into discriminator
 
             # how well did we fool the discriminator?
-            g_loss = adversarial_loss(discriminator(fake_output), valid)
+            g_loss = adversarial_loss(discriminator(fake_packed_output), valid)
 
             # gradient descent
             g_loss.backward()
@@ -225,8 +242,8 @@ def train(save_model=False,
             ########## Discriminator stuff ##########
             optimizer_D.zero_grad()
             # see how well the discriminator can discriminate
-            real_loss = adversarial_loss(discriminator(real_input), valid)
-            fake_loss = adversarial_loss(discriminator(fake_output.detach()), fake)
+            real_loss = adversarial_loss(discriminator(real_packed_input), valid)
+            fake_loss = adversarial_loss(discriminator(fake_packed_output.detach()), fake)
             d_loss = (real_loss + fake_loss) / 2
 
             # gradient descent
