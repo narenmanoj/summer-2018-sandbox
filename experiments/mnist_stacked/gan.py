@@ -125,14 +125,14 @@ def show(img):
                 return
 
 
-def get_mnist_dataloader(batch_size, img_size=32):
+def get_mnist_dataloader(batch_size, img_size=32, train=True):
     assert batch_size % 3 == 0  # for stacking
     assert 60000 % batch_size == 0  # to account for packing
     os.makedirs("./data/mnist", exist_ok=True)
     dataloader = torch.utils.data.DataLoader(
         datasets.MNIST(
             "./data/mnist",
-            train=True,
+            train=train,
             download=True,
             transform=transforms.Compose([
                 transforms.Resize(img_size),
