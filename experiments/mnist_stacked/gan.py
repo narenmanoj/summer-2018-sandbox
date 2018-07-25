@@ -43,8 +43,7 @@ class DCGenerator(nn.Module):
 
         fc_outputs = 512 * (self.init_size**2)
         self.l1 = nn.Sequential(
-            nn.Linear(self.latent_dim, fc_outputs),
-            nn.BatchNorm1d(fc_outputs),
+            nn.Linear(self.latent_dim, fc_outputs), nn.BatchNorm1d(fc_outputs),
             nn.LeakyReLU(0.0, inplace=True))
 
         self.conv_blocks = nn.Sequential(
@@ -119,15 +118,16 @@ def show(img):
     for row in range(nrows):
         for col in range(ncols):
             plt.subplot(nrows, ncols, i + 1)
-            plt.imshow(np.transpose(npimg[i], (1, 2, 0)), interpolation='nearest')
+            plt.imshow(
+                np.transpose(npimg[i], (1, 2, 0)), interpolation='nearest')
             i += 1
             if i >= num_images:
                 return
-    
+
 
 def get_mnist_dataloader(batch_size, img_size=32):
     assert batch_size % 3 == 0  # for stacking
-    assert 60000 % batch_size == 0 # to account for packing
+    assert 60000 % batch_size == 0  # to account for packing
     os.makedirs("./data/mnist", exist_ok=True)
     dataloader = torch.utils.data.DataLoader(
         datasets.MNIST(
@@ -143,6 +143,7 @@ def get_mnist_dataloader(batch_size, img_size=32):
         shuffle=True)
     return dataloader
 
+
 def pack_samples(imgs, packing=1):
     assert packing >= 1
     if packing != 1:
@@ -154,6 +155,7 @@ def pack_samples(imgs, packing=1):
             sub_batch.append(imgs[i + j])
         batch.append(torch.cat(sub_batch))
     return torch.stack(batch)
+
 
 def form_stacks(imgs):
     assert len(imgs) % 3 == 0  # for stacking
@@ -177,15 +179,14 @@ def train(save_model=False,
         assert len(filename) > 0
 
     # initialize things
-    generator = DCGenerator(
-        latent_dim=latent_dim)
+    generator = DCGenerator(latent_dim=latent_dim)
     discriminator = DCDiscriminator(packing=packing)
     adversarial_loss = torch.nn.BCELoss()
     if cuda:
         generator.cuda()
         discriminator.cuda()
         adversarial_loss.cuda()
-        
+
     generator.apply(dc_weights_init_normal)
     discriminator.apply(dc_weights_init_normal)
 
@@ -204,23 +205,26 @@ def train(save_model=False,
         lr=learning_rate,
         betas=(b1, b2),
         amsgrad=amsgrad)
-    
+
     dataloader = get_mnist_dataloader(num_samples_per_batch * 3 * packing)
 
     # train the GAN
     for epoch in range(num_epochs):
         for i, (imgs, _) in enumerate(dataloader):
             # input
-            real_input = form_stacks(Variable(imgs.type(Tensor), requires_grad=False))
-            
-            real_packed_input = pack_samples(real_input, packing) # goes into discriminator
+            real_input = form_stacks(
+                Variable(imgs.type(Tensor), requires_grad=False))
+
+            real_packed_input = pack_samples(
+                real_input, packing)  # goes into discriminator
 
             # ground truths
             valid = Variable(
-                Tensor(real_packed_input.shape[0], 1).fill_(1.0), requires_grad=False)
+                Tensor(real_packed_input.shape[0], 1).fill_(1.0),
+                requires_grad=False)
             fake = Variable(
-                Tensor(real_packed_input.shape[0], 1).fill_(0.0), requires_grad=False)
-
+                Tensor(real_packed_input.shape[0], 1).fill_(0.0),
+                requires_grad=False)
 
             ########## Generator stuff ##########
             optimizer_G.zero_grad()
@@ -234,7 +238,8 @@ def train(save_model=False,
 
             # get generator output for the latent z
             fake_output = generator(z)
-            fake_packed_output = pack_samples(fake_output, packing) # goes into discriminator
+            fake_packed_output = pack_samples(
+                fake_output, packing)  # goes into discriminator
 
             # how well did we fool the discriminator?
             g_loss = adversarial_loss(discriminator(fake_packed_output), valid)
@@ -246,8 +251,10 @@ def train(save_model=False,
             ########## Discriminator stuff ##########
             optimizer_D.zero_grad()
             # see how well the discriminator can discriminate
-            real_loss = adversarial_loss(discriminator(real_packed_input), valid)
-            fake_loss = adversarial_loss(discriminator(fake_packed_output.detach()), fake)
+            real_loss = adversarial_loss(
+                discriminator(real_packed_input), valid)
+            fake_loss = adversarial_loss(
+                discriminator(fake_packed_output.detach()), fake)
             d_loss = (real_loss + fake_loss) / 2
 
             # gradient descent
@@ -256,7 +263,9 @@ def train(save_model=False,
 
         # progress prints and checkpointing (checkpointing not implemented)
         if save_model:
-            torch.save(generator.state_dict(), "gen_checkpoints/" + filename + "_checkpoint_" + str(epoch))
+            torch.save(
+                generator.state_dict(),
+                "gen_checkpoints/" + filename + "_checkpoint_" + str(epoch))
         if epoch % (num_epochs // disp_interval) == 0:
             print("[Epoch %d/%d] [Discriminator Loss: %f] [Generator Loss: %f]"
                   % (epoch, num_epochs, d_loss.item(), g_loss.item()))
@@ -274,12 +283,8 @@ def train(save_model=False,
     return generator
 
 
-def load_model(filename,
-               latent_dim=100,
-               img_size=32):
-    generator = DCGenerator(
-        latent_dim=latent_dim,
-        img_size=img_size)
+def load_model(filename, latent_dim=100, img_size=32):
+    generator = DCGenerator(latent_dim=latent_dim, img_size=img_size)
     generator.load_state_dict(torch.load(filename))
     if cuda:
         generator.cuda()
