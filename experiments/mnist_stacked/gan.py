@@ -39,27 +39,34 @@ class DCGenerator(nn.Module):
         self.latent_dim = 100
         self.img_size = 32
         self.channels = 3
+        self.init_size = 2
 
-        self.init_size = self.img_size // 4
+        fc_outputs = 512 * (self.init_size**2)
         self.l1 = nn.Sequential(
-            nn.Linear(self.latent_dim, 128 * self.init_size**2))
+            nn.Linear(self.latent_dim, fc_outputs),
+            nn.BatchNorm1d(fc_outputs),
+            nn.LeakyReLU(0.0, inplace=True))
 
         self.conv_blocks = nn.Sequential(
-            nn.BatchNorm2d(128),
             nn.Upsample(scale_factor=2),
-            nn.Conv2d(128, 128, 3, stride=1, padding=1),
-            nn.BatchNorm2d(128, 0.8),
+            nn.Conv2d(512, 256, 3, stride=1, padding=1),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(0.0, inplace=True),
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(256, 128, 3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
             nn.LeakyReLU(0.0, inplace=True),
             nn.Upsample(scale_factor=2),
             nn.Conv2d(128, 64, 3, stride=1, padding=1),
-            nn.BatchNorm2d(64, 0.8),
+            nn.BatchNorm2d(64),
             nn.LeakyReLU(0.0, inplace=True),
+            nn.Upsample(scale_factor=2),
             nn.Conv2d(64, self.channels, 3, stride=1, padding=1),
             nn.Tanh())
 
     def forward(self, z):
         out = self.l1(z)
-        out = out.view(out.shape[0], 128, self.init_size, self.init_size)
+        out = out.view(out.shape[0], 512, self.init_size, self.init_size)
         img = self.conv_blocks(out)
         return img
 
@@ -68,8 +75,8 @@ class DCDiscriminator(nn.Module):
     def __init__(self, img_size=32, channels=3, packing=1):
         super(DCDiscriminator, self).__init__()
 
-        self.img_size = 32
-        self.channels = 3
+        self.img_size = img_size
+        self.channels = channels
         self.packing = packing
 
         def discriminator_block(in_filters, out_filters, bn=True):
@@ -84,16 +91,16 @@ class DCDiscriminator(nn.Module):
 
         # packing occurs across the channels
         self.model = nn.Sequential(
-            *discriminator_block(self.packing * self.channels, 16, bn=False),
-            *discriminator_block(16, 32),
-            *discriminator_block(32, 64),
+            *discriminator_block(self.packing * self.channels, 64, bn=False),
             *discriminator_block(64, 128),
+            *discriminator_block(128, 256),
+            *discriminator_block(256, 512),
         )
 
         # The height and width of downsampled image
         ds_size = self.img_size // 2**4
         self.adv_layer = nn.Sequential(
-            nn.Linear(128 * ds_size**2, 1), nn.Sigmoid())
+            nn.Linear(512 * ds_size**2, 1), nn.Sigmoid())
 
     def forward(self, img):
         out = self.model(img)
@@ -116,9 +123,6 @@ def show(img):
             i += 1
             if i >= num_images:
                 return
-#     for i in range(num_images):
-#         plt.subplot(1, num_images, i + 1)
-#         plt.imshow(np.transpose(npimg[i], (1, 2, 0)), interpolation='nearest')
     
 
 def get_mnist_dataloader(batch_size, img_size=32):
@@ -251,6 +255,8 @@ def train(save_model=False,
             optimizer_D.step()
 
         # progress prints and checkpointing (checkpointing not implemented)
+        if save_model:
+            torch.save(generator.state_dict(), "gen_checkpoints/" + filename + "_checkpoint_" + str(epoch))
         if epoch % (num_epochs // disp_interval) == 0:
             print("[Epoch %d/%d] [Discriminator Loss: %f] [Generator Loss: %f]"
                   % (epoch, num_epochs, d_loss.item(), g_loss.item()))
@@ -264,7 +270,6 @@ def train(save_model=False,
             show(samples.detach())
             plt.show()
     if save_model:
-        assert len(filename) > 0
         torch.save(generator.state_dict(), filename)
     return generator
 
