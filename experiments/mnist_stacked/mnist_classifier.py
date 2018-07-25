@@ -68,7 +68,7 @@ class Net(nn.Module):
 
         for m in self.classifier.children():
             if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform(m.weight)
+                nn.init.xavier_uniform_(m.weight)
             elif isinstance(m, nn.BatchNorm1d):
                 m.weight.data.fill_(1)
                 m.bias.data.zero_()
@@ -137,14 +137,14 @@ def evaluate(model, data_loader):
     correct = 0
 
     for data, target in data_loader:
-        data, target = Variable(data, volatile=True), Variable(target)
+        data, target = Variable(data, requires_grad=False), Variable(target)
         if torch.cuda.is_available():
             data = data.cuda()
             target = target.cuda()
 
         output = model(data)
 
-        loss += F.cross_entropy(output, target, size_average=False).data[0]
+        loss += F.cross_entropy(output, target, size_average=False).data.item()
 
         pred = output.data.max(1, keepdim=True)[1]
         correct += pred.eq(target.data.view_as(pred)).cpu().sum()
