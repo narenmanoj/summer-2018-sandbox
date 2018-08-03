@@ -154,3 +154,6 @@ def evaluate(model, data_loader):
     print('\nAverage loss: {:.4f}, Accuracy: {}/{} ({:.3f}%)\n'.format(
         loss, correct, len(data_loader.dataset),
         100. * correct / len(data_loader.dataset)))
+    
+def classify_stacked_images(loaded_gen, loaded_mod, img):
+    pass
