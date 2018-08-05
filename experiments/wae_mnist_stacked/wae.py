@@ -47,7 +47,11 @@ def get_dataloader(dataset_name="MNIST",
         return dataloader
 
 
-def show(img):
+def show(img, title=""):
+    pad_channels = False
+    if int(img.shape[1]) == 1:
+        pad_channels = True
+    plt.title(title)
     npimg = img.clone().cpu().numpy()
     num_images = npimg.shape[0]
     nrows = int(np.ceil(np.sqrt(num_images)))
@@ -56,7 +60,12 @@ def show(img):
     for row in range(nrows):
         for col in range(ncols):
             plt.subplot(nrows, ncols, i + 1)
-            to_show = np.clip(np.transpose(npimg[i], (1, 2, 0)), 0, 1)
+            if pad_channels:
+                zero_pads = np.zeros((npimg[i].shape[1], npimg[i].shape[2]))
+                to_show = np.stack([npimg[i][0], zero_pads, zero_pads.copy()])
+                to_show = np.clip(np.transpose(to_show, (1, 2, 0)), 0, 1)
+            else:
+                to_show = np.clip(np.transpose(npimg[i], (1, 2, 0)), 0, 1)
             plt.imshow(to_show, interpolation='nearest')
             i += 1
             if i >= num_images:
@@ -149,18 +158,6 @@ class Encoder(nn.Module):
         self.padding = (
             self.conv_filter_size - self.stride) // 2  # "SAME" padding
 
-        # self.conv_model = nn.Sequential(nn.Conv2d(self.channels, 128, self.conv_filter_size, stride=self.stride, padding=self.padding),
-        #                            nn.BatchNorm2d(128),
-        #                            nn.ReLU(),
-        #                            nn.Conv2d(128, 256, self.conv_filter_size, stride=self.stride, padding=self.padding),
-        #                            nn.BatchNorm2d(256),
-        #                            nn.ReLU(),
-        #                            nn.Conv2d(256, 512, self.conv_filter_size, stride=self.stride, padding=self.padding),
-        #                            nn.BatchNorm2d(512),
-        #                            nn.ReLU(),
-        #                            nn.Conv2d(512, 1024, self.conv_filter_size, stride=self.stride, padding=self.padding),
-        #                            nn.BatchNorm2d(1024),
-        #                            nn.ReLU())
         self.conv_model = nn.Sequential(
             *conv_block(
                 self.channels,
@@ -222,7 +219,7 @@ class Decoder(nn.Module):
         # do some dimension fixing
         self.deconv_model = nn.Sequential(
             *deconv_block(
-                self.init_size * self.init_size * 1024,
+                1024,
                 512,
                 self.conv_filter_size,
                 stride=self.stride,
@@ -236,16 +233,16 @@ class Decoder(nn.Module):
             *deconv_block(
                 256,
                 self.channels,
-                self.conv_filter_size,
-                stride=self.stride,
-                padding=self.padding,
+                3,
+                stride=1,
+                padding=(self.conv_filter_size - self.stride) // 2,
                 bn=False,
                 relu=False), nn.Sigmoid())
 
     def forward(self, z):
-        out = self.model(z)
+        out = self.fc1(z)
         # do some reshaping thing here
-        out = out.view(-1, self.latent_dim * 8, self.init_size, self.init_size)
+        out = out.view(-1, self.latent_dim * 128, self.init_size, self.init_size)
         return self.deconv_model(out)
 
 
@@ -263,37 +260,33 @@ class Discriminator(nn.Module):
         return self.model(z)
 
 
-def train(lr=0.0001, epochs=100, latent_dim=8, sigma=1, lam=10):
+def train(lr=0.0001, epochs=100, latent_dim=8, sigma=1, lam=10, disp_interval=2):
     train_loader = get_dataloader()
     encoder = Encoder()
     decoder = Decoder()
     discriminator = Discriminator()
+    criterion = nn.MSELoss()
     if cuda:
         encoder.cuda()
         decoder.cuda()
         discriminator.cuda()
+        criterion.cuda()
     # Optimizers
     enc_optim = torch.optim.Adam(encoder.parameters(), lr=lr, amsgrad=True)
     dec_optim = torch.optim.Adam(decoder.parameters(), lr=lr, amsgrad=True)
     dis_optim = torch.optim.Adam(discriminator.parameters(), lr=0.5 * lr, amsgrad=True)
+    
 
     enc_scheduler = StepLR(enc_optim, step_size=30, gamma=0.5)
     dec_scheduler = StepLR(dec_optim, step_size=30, gamma=0.5)
     dis_scheduler = StepLR(dis_optim, step_size=30, gamma=0.5)
-
-    one = torch.Tensor([1])
-    mone = one * -1
-
-    if cuda:
-        one = one.cuda()
-        mone = mone.cuda()
 
     for epoch in range(epochs):
         step = 0
 
         for images, _ in tqdm(train_loader):
 
-            if torch.cuda.is_available():
+            if cuda:
                 images = images.cuda()
 
             set_zero_grad([encoder, decoder, discriminator])
@@ -305,32 +298,32 @@ def train(lr=0.0001, epochs=100, latent_dim=8, sigma=1, lam=10):
             free_params(discriminator)
 
             z_fake = torch.randn(images.size()[0], latent_dim) * sigma
-            print("z_fake shape")
-            print(z_fake.shape)
+#             print("z_fake shape")
+#             print(z_fake.shape)
 
             if cuda:
                 z_fake = z_fake.cuda()
 
             
             d_fake = discriminator(z_fake)
-            print("d_fake shape")
-            print(d_fake.shape)
+#             print("d_fake shape")
+#             print(d_fake.shape)
 
             
             z_real = encoder(images)
-            print("z_real shape")
-            print(z_real.shape)
+#             print("z_real shape")
+#             print(z_real.shape)
             
             d_real = discriminator(z_real)
-            print("d_real shape")
-            print(d_real.shape)
+#             print("d_real shape")
+#             print(d_real.shape)
             
-            log_d_fake = torch.log(d_fake).mean()
+            log_d_fake = -torch.log(d_fake).mean()
+            log_d_fake.backward()
             
-            log_d_fake.backward(mone)
             
-            log_d_real = torch.log(1 - d_real).mean()
-            log_d_real.backward(mone)
+            log_d_real = -torch.log(1 - d_real).mean()
+            log_d_real.backward()
 
             dis_optim.step()
 
@@ -347,12 +340,24 @@ def train(lr=0.0001, epochs=100, latent_dim=8, sigma=1, lam=10):
             d_real = discriminator(encoder(Variable(images.data)))
 
             recon_loss = criterion(x_recon, images)
-            d_loss = lam * (torch.log(d_real)).mean()
+            d_loss = -lam * (torch.log(d_real)).mean()
 
-            recon_loss.backward(one)
-            d_loss.backward(mone)
+            recon_loss.backward()
+            d_loss.backward()
 
             enc_optim.step()
             dec_optim.step()
 
             step += 1
+        if epoch % disp_interval == 0:
+            print("[Epoch %d/%d] [Reconstruction Loss: %f]" % (epoch, epochs, recon_loss.item()))
+            test_dl = get_dataloader(batch_size=10, train=False)
+            for i, (images, _) in enumerate(test_dl):
+                if cuda:
+                    images = images.cuda()
+                show(images, "Originals")
+                reconstructions = decoder(encoder(images)).detach()
+                show(reconstructions, "Reconstructions")
+                plt.show()
+                plt.clf()
+                break # just show 1 batch
