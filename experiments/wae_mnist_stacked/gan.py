@@ -31,7 +31,6 @@ def dc_weights_init_normal(m):
         torch.nn.init.constant_(m.bias.data, 0.0)
 
 
-# taken from https://github.com/maitek/waae-pytorch/blob/master/WAAE.py
 class Decoder(nn.Module):
     def __init__(self, latent_dim=64, channels=3, ngf=64, ndf=64):
         super(Decoder, self).__init__()
@@ -65,6 +64,7 @@ class Decoder(nn.Module):
             x = layer(x)
         return x
 
+    
 class Encoder(nn.Module):
     def __init__(self, latent_dim=64, channels=3, ngf=64, ndf=64):
         super(Encoder, self).__init__()
@@ -126,8 +126,8 @@ def show(img):
     for row in range(nrows):
         for col in range(ncols):
             plt.subplot(nrows, ncols, i + 1)
-            plt.imshow(
-                np.transpose(npimg[i], (1, 2, 0)), interpolation='nearest')
+            to_show = np.clip(np.transpose(npimg[i], (1, 2, 0)), 0, 1)
+            plt.imshow(to_show, interpolation='nearest')
             i += 1
             if i >= num_images:
                 return
@@ -174,6 +174,20 @@ def form_stacks(imgs):
         batch.append(new_img)
     return torch.stack(batch)
 
+def evaluate_model_reconstruction(encoder, decoder, latent_dim=64, num_samples=25):
+    plt.clf()
+    P = decoder
+    Q = encoder
+    dataloader = get_mnist_dataloader(3 * num_samples)
+    for i, (imgs, _) in enumerate(dataloader):
+        X = form_stacks(Variable(imgs.type(Tensor), requires_grad=False))
+        z_sample = Q(X)
+        X_sample = P(z_sample)
+        show(X_sample.detach())
+        plt.show()
+        show(X)
+        plt.show()
+        return
 
 def train(save_model=False,
           filename="",
@@ -208,9 +222,11 @@ def train(save_model=False,
     
     for epoch in range(num_epochs):
         print(epoch)
+        evaluate_model_reconstruction(Q, P)
         for i, (imgs, _) in enumerate(dataloader):
             X = form_stacks(Variable(imgs.type(Tensor), requires_grad=False))
             z_sample = Q(X)
+            z_sample.squeeze()
             X_sample = P(z_sample)
             recon_loss = F.mse_loss(X_sample, X)
             
