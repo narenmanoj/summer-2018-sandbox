@@ -260,7 +260,9 @@ class Discriminator(nn.Module):
         return self.model(z)
 
 
-def train(lr=0.0001, epochs=100, latent_dim=8, sigma=1, lam=10, disp_interval=2, clamp=0.0):
+def train(lr=0.001, epochs=100, latent_dim=8, sigma=1, lam=10, disp_interval=2, clamp=0.0, save=False, filename="", ipy=True):
+    if save:
+        assert len(filename) > 0
     assert clamp >= 0.0
     clamp_lower = -clamp
     clamp_upper = clamp
@@ -358,6 +360,8 @@ def train(lr=0.0001, epochs=100, latent_dim=8, sigma=1, lam=10, disp_interval=2,
             step += 1
         if epoch % disp_interval == 0:
             print("[Epoch %d/%d] [Reconstruction Loss: %f]" % (epoch, epochs, recon_loss.item()))
+            if not ipy:
+                continue
             test_dl = get_dataloader(batch_size=10, train=False)
             for i, (images, _) in enumerate(test_dl):
                 if cuda:
@@ -368,3 +372,17 @@ def train(lr=0.0001, epochs=100, latent_dim=8, sigma=1, lam=10, disp_interval=2,
                 plt.show()
                 plt.clf()
                 break # just show 1 batch
+    if save:
+        torch.save(encoder.state_dict(), filename + "_enc")
+        torch.save(decoder.state_dict(), filename + "_dec")
+    return encoder, decoder
+
+def load_model(filename):
+    encoder = Encoder()
+    decoder = Decoder()
+    encoder.load_state_dict(torch.load(filename + "_enc"))
+    decoder.load_state_dict(torch.load(filename + "_dec"))
+    if cuda:
+        encoder.cuda()
+        decoder.cuda()
+    return encoder, decoder
