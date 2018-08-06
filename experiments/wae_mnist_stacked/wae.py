@@ -260,7 +260,10 @@ class Discriminator(nn.Module):
         return self.model(z)
 
 
-def train(lr=0.0001, epochs=100, latent_dim=8, sigma=1, lam=10, disp_interval=2):
+def train(lr=0.0001, epochs=100, latent_dim=8, sigma=1, lam=10, disp_interval=2, clamp=0.0):
+    assert clamp >= 0.0
+    clamp_lower = -clamp
+    clamp_upper = clamp
     train_loader = get_dataloader()
     encoder = Encoder()
     decoder = Decoder()
@@ -288,6 +291,10 @@ def train(lr=0.0001, epochs=100, latent_dim=8, sigma=1, lam=10, disp_interval=2)
 
             if cuda:
                 images = images.cuda()
+
+            if clamp != 0.0:
+                for p in encoder.parameters():
+                    p.data.clamp_(clamp_lower, clamp_upper)
 
             set_zero_grad([encoder, decoder, discriminator])
 
