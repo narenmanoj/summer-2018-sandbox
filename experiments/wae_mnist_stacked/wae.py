@@ -254,7 +254,8 @@ class Discriminator(nn.Module):
         self.model = nn.Sequential(
             nn.Linear(self.latent_dim, 512), nn.ReLU(), nn.Linear(512, 512),
             nn.ReLU(), nn.Linear(512, 512), nn.ReLU(), nn.Linear(512, 512),
-            nn.ReLU(), nn.Linear(512, 1))
+            nn.ReLU(), nn.Linear(512, 1),
+            nn.Sigmoid())
 
     def forward(self, z):
         return self.model(z)
