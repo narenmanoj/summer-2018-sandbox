@@ -100,12 +100,13 @@ def conv_block(in_filters,
             out_filters,
             conv_filter_size,
             stride=stride,
-            padding=padding)
+            padding=padding,
+            bias=False)
     ]
     if bn:
         block.append(nn.BatchNorm2d(out_filters))
     if relu:
-        block.append(nn.ReLU())
+        block.append(nn.ReLU(True))
     return block
 
 
@@ -127,7 +128,7 @@ def deconv_block(in_filters,
     if bn:
         block.append(nn.BatchNorm2d(out_filters))
     if relu:
-        block.append(nn.ReLU())
+        block.append(nn.ReLU(True))
     return block
 
 
@@ -164,7 +165,8 @@ class Encoder(nn.Module):
                 128,
                 self.conv_filter_size,
                 stride=self.stride,
-                padding=self.padding),
+                padding=self.padding,
+                bn=False),
             *conv_block(
                 128,
                 256,
