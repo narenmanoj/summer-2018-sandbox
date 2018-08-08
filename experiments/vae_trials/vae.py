@@ -6,6 +6,7 @@ from torch import nn, optim
 from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
+from torch.autograd import Variable
 import numpy as np
 
 parser = argparse.ArgumentParser(description='VAE MNIST Example')
@@ -27,11 +28,22 @@ parser.add_argument(
     default=False,
     help='enables CUDA training')
 parser.add_argument(
+    '--dist-penalty',
+    action='store_true',
+    default=False,
+    help='enables encoding distance penalty')
+parser.add_argument(
     '--seed',
     type=int,
     default=1,
     metavar='S',
     help='random seed (default: 1)')
+parser.add_argument(
+    '--latent-dim',
+    type=int,
+    default=20,
+    metavar='N',
+    help='dimension of latent space (default: 20)')
 parser.add_argument(
     '--log-interval',
     type=int,
@@ -47,7 +59,13 @@ args.cuda = not args.no_cuda and torch.cuda.is_available()
 
 torch.manual_seed(args.seed)
 
-experiment_name = ("conv" if args.convnet else "fc") + "_%f" % args.clip
+latent_dim = args.latent_dim
+
+clip_name = 999 if args.clip <= 0 else args.clip
+
+experiment_name = ("conv" if args.convnet else "fc") + (
+    "_dist"
+    if args.dist_penalty else "_lip") + "_%f_%d" % (clip_name, latent_dim)
 
 print(experiment_name)
 
@@ -130,16 +148,22 @@ class DCGanVAE(nn.Module):
         self.fc3 = nn.Linear(latent_dim, 7 * 7 * 256)
         self.dec_model = nn.Sequential(
             *upconv_block(256, 128, filter_size, stride=stride, padding=same),
-            *upconv_block(128, 1, filter_size, stride=stride, padding=same, bn=False, relu=False),
-            nn.Sigmoid())
-        
+            *upconv_block(
+                128,
+                1,
+                filter_size,
+                stride=stride,
+                padding=same,
+                bn=False,
+                relu=False), nn.Sigmoid())
+
         self.enc_layers = [self.enc_model, self.fc1, self.fc2]
 
     def encode(self, x):
         if len(x.shape) == 3:
             x = x.unsqueeze(0)
         out = self.enc_model(x)
-        out = out.squeeze() # reshaping nonsense
+        out = out.squeeze()  # reshaping nonsense
         return self.fc1(out), self.fc2(out)
 
     def reparameterize(self, mu, logvar):
@@ -164,18 +188,19 @@ class DCGanVAE(nn.Module):
 
 
 class VAE(nn.Module):
-    def __init__(self):
+    def __init__(self, latent_dim=20):
         super(VAE, self).__init__()
 
         self.fc1 = nn.Linear(784, 400)
-        self.fc21 = nn.Linear(400, 20)
-        self.fc22 = nn.Linear(400, 20)
-        self.fc3 = nn.Linear(20, 400)
+        self.fc21 = nn.Linear(400, latent_dim)
+        self.fc22 = nn.Linear(400, latent_dim)
+        self.fc3 = nn.Linear(latent_dim, 400)
         self.fc4 = nn.Linear(400, 784)
 
         self.enc_layers = [self.fc1, self.fc21, self.fc22]
 
     def encode(self, x):
+        x = x.view(-1, 784)
         h1 = F.relu(self.fc1(x))
         return self.fc21(h1), self.fc22(h1)
 
@@ -198,15 +223,20 @@ class VAE(nn.Module):
 
 
 if args.convnet:
-    model = DCGanVAE().to(device)
+    model = DCGanVAE(latent_dim=latent_dim).to(device)
 else:
-    model = VAE().to(device)
+    model = VAE(latent_dim=latent_dim).to(device)
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
-def loss_function(recon_x, x, mu, logvar):
-    BCE = F.binary_cross_entropy(recon_x, x.view(-1, 784), size_average=False)
+def loss_function(recon_x, x, mu, logvar, dist_regularizer=500):
+    lam = dist_regularizer
+    if args.convnet:
+        BCE = F.binary_cross_entropy(recon_x, x, size_average=False)
+    else:
+        BCE = F.binary_cross_entropy(
+            recon_x, x.view(-1, 784), size_average=False)
 
     # see Appendix B from VAE paper:
     # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
@@ -214,7 +244,15 @@ def loss_function(recon_x, x, mu, logvar):
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
-    return BCE + KLD
+    total = BCE + KLD
+
+    if args.dist_penalty:
+        bs = int(x.shape[0])
+        first = model.encode(x[:bs // 2])[0]
+        second = model.encode(x[bs // 2:])[0]
+        dist_loss = F.mse_loss(first, second)
+        total += lam * F.mse_loss(first, second)
+    return total
 
 
 def train(epoch):
@@ -259,7 +297,8 @@ def test(epoch):
                 ])
                 save_image(
                     comparison.cpu(),
-                    'results/reconstructions/' + experiment_name + '_%d.png' % epoch,
+                    'results/reconstructions/' + experiment_name +
+                    '_%d.png' % epoch,
                     nrow=n)
 
     test_loss /= len(test_loader.dataset)
@@ -294,12 +333,13 @@ def test_interpolate(epoch, num_intermediates=20, num_interpolations=1):
                 test_imgs_tensor = torch.cat(test_imgs)
                 clamp = args.clip if args.clip > 0 else 0
                 save_image(
-                    test_imgs_tensor.cpu(),
-                    'results/interpolations/' + experiment_name + '_%d_%d.png' % (epoch, i))
+                    test_imgs_tensor.cpu(), 'results/interpolations/' +
+                    experiment_name + '_%d_%d.png' % (epoch, i))
             n -= 1
             i += 1
             if n <= 0:
                 break
+
 
 test(0)
 test_interpolate(0)
@@ -308,9 +348,11 @@ for epoch in range(1, args.epochs + 1):
     test(epoch)
     test_interpolate(epoch)
     with torch.no_grad():
-        sample = torch.randn(64, 20).to(device)
+        sample = torch.randn(64, latent_dim).to(device)
         sample = model.decode(sample).cpu()
-        save_image(sample.view(64, 1, 28, 28), 'results/samples/' + experiment_name + '_%d.png' % epoch)
+        save_image(
+            sample.view(64, 1, 28, 28),
+            'results/samples/' + experiment_name + '_%d.png' % epoch)
 
 for layer in model.enc_layers:
     for p in layer.parameters():
