@@ -40,10 +40,16 @@ parser.add_argument(
     help='how many batches to wait before logging training status')
 parser.add_argument(
     '--clip', type=float, default=-1, metavar='N', help='weight clip limit')
+parser.add_argument(
+    '--convnet', action='store_true', default=False, help='enables convnet')
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
 torch.manual_seed(args.seed)
+
+experiment_name = ("conv" if args.convnet else "fc") + "_%f" % args.clip
+
+print(experiment_name)
 
 device = torch.device("cuda" if args.cuda else "cpu")
 
@@ -60,37 +66,82 @@ test_loader = torch.utils.data.DataLoader(
     shuffle=True,
     **kwargs)
 
-def conv_block(in_channels, out_channels, kernel_size, stride=1, padding=1, bn=True, relu=True):
-    block = [nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding)]
+
+def conv_block(in_channels,
+               out_channels,
+               kernel_size,
+               stride=1,
+               padding=1,
+               bn=True,
+               relu=True):
+    block = [
+        nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=stride,
+            padding=padding)
+    ]
     if bn:
         block.append(nn.BatchNorm2d(out_channels))
     if relu:
         block.append(nn.ReLU(True))
-        
-def upconv_block(in_channels, out_channels, kernel_size, stride=1, padding=1, bn=True, relu=True):
-    block = [nn.ConvTranspose2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding)]
+    return block
+
+
+def upconv_block(in_channels,
+                 out_channels,
+                 kernel_size,
+                 stride=1,
+                 padding=1,
+                 bn=True,
+                 relu=True):
+    block = [
+        nn.ConvTranspose2d(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=stride,
+            padding=padding)
+    ]
     if bn:
         block.append(nn.BatchNorm2d(out_channels))
     if relu:
         block.append(nn.ReLU(True))
+    return block
+
 
 class DCGanVAE(nn.Module):
-    def __init__(self):
+    def __init__(self, latent_dim=20):
         super(DCGanVAE, self).__init__()
         filter_size = 4
         stride = 2
         same = (filter_size - stride) // 2
+
+        self.enc_model = nn.Sequential(
+            *conv_block(1, 128, filter_size, stride=stride, padding=same),
+            *conv_block(128, 256, filter_size, stride=stride, padding=same),
+            *conv_block(256, 512, filter_size, stride=stride, padding=same),
+            *conv_block(512, 1024, filter_size, stride=stride, padding=same))
+
+        self.fc1 = nn.Linear(1024, latent_dim)  # means
+        self.fc2 = nn.Linear(1024, latent_dim)  # stdevs
+
+        self.fc3 = nn.Linear(latent_dim, 7 * 7 * 256)
+        self.dec_model = nn.Sequential(
+            *upconv_block(256, 128, filter_size, stride=stride, padding=same),
+            *upconv_block(128, 1, filter_size, stride=stride, padding=same, bn=False, relu=False),
+            nn.Sigmoid())
         
-        self.model = nn.Sequential(*conv_block(1, 128, filter_size, stride=stride, padding=same),
-                                   *conv_block(128, 256, filter_size, stride=stride, padding=same),
-                                   *conv_block(256, 512, filter_size, stride=stride, padding=same))
-        
-        self.fc1 = nn.Linear(, 20) 
-        
+        self.enc_layers = [self.enc_model, self.fc1, self.fc2]
+
     def encode(self, x):
-        out = self.model(x)
-        return self.fc1(out)
-    
+        if len(x.shape) == 3:
+            x = x.unsqueeze(0)
+        out = self.enc_model(x)
+        out = out.squeeze() # reshaping nonsense
+        return self.fc1(out), self.fc2(out)
+
     def reparameterize(self, mu, logvar):
         if self.training:
             std = torch.exp(0.5 * logvar)
@@ -98,15 +149,18 @@ class DCGanVAE(nn.Module):
             return eps.mul(std).add_(mu)
         else:
             return mu
-    
+
     def decode(self, z):
-        pass
-    
+        out = self.fc3(z)
+        # do more reshaping nonsense
+        t = int(np.prod(out.shape))
+        out = out.view(int(t / (256 * 7 * 7)), 256, 7, 7)
+        return self.dec_model(out)
+
     def forward(self, x):
         mu, logvar = self.encode(x)
         z = self.reparameterize(mu, logvar)
         return self.decode(z), mu, logvar
-    
 
 
 class VAE(nn.Module):
@@ -143,7 +197,10 @@ class VAE(nn.Module):
         return self.decode(z), mu, logvar
 
 
-model = VAE().to(device)
+if args.convnet:
+    model = DCGanVAE().to(device)
+else:
+    model = VAE().to(device)
 optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
 
@@ -165,16 +222,16 @@ def train(epoch):
     train_loss = 0
     for batch_idx, (data, _) in enumerate(train_loader):
         data = data.to(device)
-        if args.clip >= 1e-5:
-            for layer in model.enc_layers:
-                for p in layer.parameters():
-                    p.data.clamp_(-args.clip, args.clip)
         optimizer.zero_grad()
         recon_batch, mu, logvar = model(data)
         loss = loss_function(recon_batch, data, mu, logvar)
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
+        if args.clip >= 1e-5:
+            for layer in model.enc_layers:
+                for p in layer.parameters():
+                    p.data.clamp_(-args.clip, args.clip)
         if batch_idx % args.log_interval == 0:
             print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
                 epoch, batch_idx * len(data), len(train_loader.dataset),
@@ -202,7 +259,7 @@ def test(epoch):
                 ])
                 save_image(
                     comparison.cpu(),
-                    'results/reconstruction_%d.png' % epoch,
+                    'results/reconstructions/' + experiment_name + '_%d.png' % epoch,
                     nrow=n)
 
     test_loss /= len(test_loader.dataset)
@@ -212,6 +269,7 @@ def test(epoch):
 def test_interpolate(epoch, num_intermediates=20, num_interpolations=1):
     ni = num_intermediates
     n = num_interpolations
+    i = 0
     if n <= 0:
         return
     model.eval()
@@ -220,8 +278,12 @@ def test_interpolate(epoch, num_intermediates=20, num_interpolations=1):
             data = data.to(device)
             for j in range(0, args.batch_size, 2):
                 # interpolate between j and j + 1
-                mu1, logvar1 = model.encode(data[j].view(-1, 784))
-                mu2, logvar2 = model.encode(data[j + 1].view(-1, 784))
+                if args.convnet:
+                    mu1, logvar1 = model.encode(data[j])
+                    mu2, logvar2 = model.encode(data[j + 1])
+                else:
+                    mu1, logvar1 = model.encode(data[j].view(-1, 784))
+                    mu2, logvar2 = model.encode(data[j + 1].view(-1, 784))
                 z1 = model.reparameterize(mu1, logvar1)
                 z2 = model.reparameterize(mu2, logvar2)
                 test_imgs = [
@@ -231,13 +293,16 @@ def test_interpolate(epoch, num_intermediates=20, num_interpolations=1):
                 test_imgs = [img.view(1, 1, 28, 28) for img in test_imgs]
                 test_imgs_tensor = torch.cat(test_imgs)
                 clamp = args.clip if args.clip > 0 else 0
-                save_image(test_imgs_tensor.cpu(),
-                           'results/interpolation_%d_%d_%f.png' % (epoch, n, clamp))
+                save_image(
+                    test_imgs_tensor.cpu(),
+                    'results/interpolations/' + experiment_name + '_%d_%d.png' % (epoch, i))
             n -= 1
+            i += 1
             if n <= 0:
                 break
 
-
+test(0)
+test_interpolate(0)
 for epoch in range(1, args.epochs + 1):
     train(epoch)
     test(epoch)
@@ -245,7 +310,7 @@ for epoch in range(1, args.epochs + 1):
     with torch.no_grad():
         sample = torch.randn(64, 20).to(device)
         sample = model.decode(sample).cpu()
-        save_image(sample.view(64, 1, 28, 28), 'results/sample_%d.png' % epoch)
+        save_image(sample.view(64, 1, 28, 28), 'results/samples/' + experiment_name + '_%d.png' % epoch)
 
 for layer in model.enc_layers:
     for p in layer.parameters():
