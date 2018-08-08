@@ -7,6 +7,9 @@ from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
 from torch.autograd import Variable
+import matplotlib
+matplotlib.use('agg')
+import matplotlib.pyplot as plt
 import numpy as np
 
 parser = argparse.ArgumentParser(description='VAE MNIST Example')
@@ -305,7 +308,7 @@ def test(epoch):
     print('====> Test set loss: {:.4f}'.format(test_loss))
 
 
-def test_interpolate(epoch, num_intermediates=20, num_interpolations=1):
+def test_interpolate(epoch, num_intermediates=20, num_interpolations=5):
     ni = num_intermediates
     n = num_interpolations
     i = 0
@@ -340,9 +343,24 @@ def test_interpolate(epoch, num_intermediates=20, num_interpolations=1):
             if n <= 0:
                 break
 
+plot_colors = [(np.random.uniform(), np.random.uniform(), np.random.uniform()) for i in range(10)]
+
+def project_latent_space(epoch):
+    latent_vecs = [[] for i in range(10)]
+    with torch.no_grad():
+        for i, (data, labels) in enumerate(test_loader):
+            data = data.to(device)
+            mu, logvar = model.encode(data)
+            z = model.reparameterize(mu, logvar).cpu().numpy()
+            for j in range(z.shape[0]):
+                latent_vecs[int(labels[j])].append(z[j][:2])
+        for i in range(10):
+            plt.scatter(*zip(*latent_vecs[i]), color=plot_colors[i], s=5)
+        plt.savefig("results/latent_space_visualizations/" + experiment_name + "_%d.png" % epoch)
 
 test(0)
 test_interpolate(0)
+project_latent_space(0)
 for epoch in range(1, args.epochs + 1):
     train(epoch)
     test(epoch)
@@ -357,3 +375,4 @@ for epoch in range(1, args.epochs + 1):
 for layer in model.enc_layers:
     for p in layer.parameters():
         print(torch.max(torch.abs(p.data)))
+project_latent_space(args.epochs + 1)
