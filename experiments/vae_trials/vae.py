@@ -22,9 +22,9 @@ parser.add_argument(
 parser.add_argument(
     '--epochs',
     type=int,
-    default=10,
+    default=20,
     metavar='N',
-    help='number of epochs to train (default: 10)')
+    help='number of epochs to train (default: 20)')
 parser.add_argument(
     '--no-cuda',
     action='store_true',
@@ -32,9 +32,10 @@ parser.add_argument(
     help='enables CUDA training')
 parser.add_argument(
     '--dist-penalty',
-    action='store_true',
-    default=False,
-    help='enables encoding distance penalty')
+    type=float,
+    default=-1.0,
+    metavar='N',
+    help='encoding distance weight penalty coefficient')
 parser.add_argument(
     '--seed',
     type=int,
@@ -44,9 +45,9 @@ parser.add_argument(
 parser.add_argument(
     '--latent-dim',
     type=int,
-    default=20,
+    default=8,
     metavar='N',
-    help='dimension of latent space (default: 20)')
+    help='dimension of latent space (default: 8)')
 parser.add_argument(
     '--log-interval',
     type=int,
@@ -65,10 +66,11 @@ torch.manual_seed(args.seed)
 latent_dim = args.latent_dim
 
 clip_name = 999 if args.clip <= 0 else args.clip
+lam_name = 999 if args.dist_penalty <= 0 else args.dist_penalty
 
 experiment_name = ("conv" if args.convnet else "fc") + (
     "_dist"
-    if args.dist_penalty else "_lip") + "_%f_%d" % (clip_name, latent_dim)
+    if args.dist_penalty else "_lip") + "_%f_%f_%d" % (clip_name, lam_name, latent_dim)
 
 print(experiment_name)
 
@@ -233,8 +235,8 @@ optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
-def loss_function(recon_x, x, mu, logvar, dist_regularizer=500):
-    lam = dist_regularizer
+def loss_function(recon_x, x, mu, logvar):
+    lam = args.dist_penalty
     if args.convnet:
         BCE = F.binary_cross_entropy(recon_x, x, size_average=False)
     else:
@@ -249,12 +251,18 @@ def loss_function(recon_x, x, mu, logvar, dist_regularizer=500):
 
     total = BCE + KLD
 
-    if args.dist_penalty:
+    if lam > 0:
         bs = int(x.shape[0])
-        first = model.encode(x[:bs // 2])[0]
-        second = model.encode(x[bs // 2:])[0]
-        dist_loss = F.mse_loss(first, second)
-        total += lam * F.mse_loss(first, second)
+        first_data = x[:bs // 2]
+        second_data = x[bs // 2:]
+        first, firstd = model.encode(first_data)
+        second, secondd = model.encode(second_data)
+        z1 = model.reparameterize(first, firstd)
+        z2 = model.reparameterize(second, secondd)
+        dist_loss_numerator = F.mse_loss(z1, z2)
+        dist_loss_denominator = F.mse_loss(first_data, second_data)
+        dist_loss = torch.sum(dist_loss_numerator / dist_loss_denominator)
+        total += lam * dist_loss
     return total
 
 
@@ -301,7 +309,7 @@ def test(epoch):
                 save_image(
                     comparison.cpu(),
                     'results/reconstructions/' + experiment_name +
-                    '_%d.png' % epoch,
+                    '_%03d.png' % epoch,
                     nrow=n)
 
     test_loss /= len(test_loader.dataset)
@@ -337,13 +345,16 @@ def test_interpolate(epoch, num_intermediates=20, num_interpolations=5):
                 clamp = args.clip if args.clip > 0 else 0
                 save_image(
                     test_imgs_tensor.cpu(), 'results/interpolations/' +
-                    experiment_name + '_%d_%d.png' % (epoch, i))
+                    experiment_name + '_%03d_%03d.png' % (epoch, i))
             n -= 1
             i += 1
             if n <= 0:
                 break
 
-plot_colors = [(np.random.uniform(), np.random.uniform(), np.random.uniform()) for i in range(10)]
+
+plot_colors = [(np.random.uniform(), np.random.uniform(), np.random.uniform())
+               for i in range(10)]
+
 
 def project_latent_space(epoch):
     latent_vecs = [[] for i in range(10)]
@@ -356,7 +367,10 @@ def project_latent_space(epoch):
                 latent_vecs[int(labels[j])].append(z[j][:2])
         for i in range(10):
             plt.scatter(*zip(*latent_vecs[i]), color=plot_colors[i], s=5)
-        plt.savefig("results/latent_space_visualizations/" + experiment_name + "_%d.png" % epoch)
+        plt.title("Vectors in latent space mapping to\ndifferent digits for MNIST")
+        plt.savefig("results/latent_space_visualizations/" + experiment_name +
+                    "_%03d.png" % epoch)
+
 
 test(0)
 test_interpolate(0)
@@ -370,7 +384,7 @@ for epoch in range(1, args.epochs + 1):
         sample = model.decode(sample).cpu()
         save_image(
             sample.view(64, 1, 28, 28),
-            'results/samples/' + experiment_name + '_%d.png' % epoch)
+            'results/samples/' + experiment_name + '_%03d.png' % epoch)
 
 for layer in model.enc_layers:
     for p in layer.parameters():
