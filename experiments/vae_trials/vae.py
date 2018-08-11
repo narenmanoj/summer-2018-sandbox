@@ -11,12 +11,13 @@ import matplotlib
 matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import numpy as np
+np.random.seed(651651)
 
 parser = argparse.ArgumentParser(description='VAE MNIST Example')
 parser.add_argument(
     '--batch-size',
     type=int,
-    default=150,
+    default=300,
     metavar='N',
     help='input batch size for training (default: 150)')
 parser.add_argument(
@@ -57,7 +58,7 @@ parser.add_argument(
 parser.add_argument(
     '--clip', type=float, default=-1, metavar='N', help='weight clip limit')
 parser.add_argument(
-    '--convnet', action='store_true', default=False, help='enables convnet')
+    '--convnet', action='store_true', default=True, help='enables convnet')
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 
@@ -69,8 +70,8 @@ clip_name = 999 if args.clip <= 0 else args.clip
 lam_name = 999 if args.dist_penalty <= 0 else args.dist_penalty
 
 experiment_name = ("conv" if args.convnet else "fc") + (
-    "_dist"
-    if args.dist_penalty else "_lip") + "_%f_%f_%d" % (clip_name, lam_name, latent_dim)
+    "_dist" if args.dist_penalty else
+    "_lip") + "_%f_%f_%d" % (clip_name, lam_name, latent_dim)
 
 print(experiment_name)
 
@@ -367,7 +368,10 @@ def project_latent_space(epoch):
                 latent_vecs[int(labels[j])].append(z[j][:2])
         for i in range(10):
             plt.scatter(*zip(*latent_vecs[i]), color=plot_colors[i], s=5)
-        plt.title("Vectors in latent space mapping to\ndifferent digits for MNIST")
+        plt.title(
+            "Vectors in latent space mapping to\ndifferent digits for MNIST")
+        plt.xlim(-3, 3)
+        plt.ylim(-3, 3)
         plt.savefig("results/latent_space_visualizations/" + experiment_name +
                     "_%03d.png" % epoch)
 
@@ -389,4 +393,9 @@ for epoch in range(1, args.epochs + 1):
 for layer in model.enc_layers:
     for p in layer.parameters():
         print(torch.max(torch.abs(p.data)))
-project_latent_space(args.epochs + 1)
+project_latent_space(args.epochs)
+
+torch.save(
+    model.state_dict(),
+    "results/checkpoints/" + experiment_name + "_params_%d" % (args.epochs))
+
