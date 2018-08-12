@@ -59,8 +59,10 @@ parser.add_argument(
     '--clip', type=float, default=-1, metavar='N', help='weight clip limit')
 parser.add_argument(
     '--convnet', action='store_true', default=True, help='enables convnet')
+parser.add_argument('--eval', type=str, default="", metavar='N', help='run in evaluation mode')
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
+post_test = args.eval
 
 torch.manual_seed(args.seed)
 
@@ -374,7 +376,6 @@ def project_latent_space(epoch):
         plt.ylim(-3, 3)
         plt.savefig("results/latent_space_visualizations/" + experiment_name +
                     "_%03d.png" % epoch)
-
 
 test(0)
 test_interpolate(0)
