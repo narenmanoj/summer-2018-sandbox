@@ -319,7 +319,7 @@ def test(epoch):
     print('====> Test set loss: {:.4f}'.format(test_loss))
 
 
-def test_interpolate(epoch, num_intermediates=20, num_interpolations=5):
+def test_interpolate(epoch, num_intermediates=8, num_interpolations=5):
     ni = num_intermediates
     n = num_interpolations
     i = 0
